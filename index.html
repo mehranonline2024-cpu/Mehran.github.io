@@ -1,102 +1,129 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Grill Time Oostende</title>
-
 <style>
-body{
-font-family:Arial,sans-serif;
-margin:0;
-padding:0;
-background:#f8f8f8;
-text-align:center;
-}
-
-header{
-background:#111;
-color:white;
-padding:30px;
-}
-
-h1{
-margin:0;
-}
-
-.card{
-background:white;
-margin:20px;
-padding:20px;
-border-radius:15px;
-box-shadow:0 2px 10px rgba(0,0,0,.1);
-}
-
-.price{
-font-size:22px;
-font-weight:bold;
-color:#d4a017;
-}
-
-.button{
-display:inline-block;
-background:#25D366;
-color:white;
-padding:15px 25px;
-border-radius:10px;
-text-decoration:none;
-font-size:20px;
-font-weight:bold;
-margin:20px;
-}
+body{margin:0;font-family:Arial,sans-serif;background:#101010;color:white}
+header{background:#000;padding:35px 20px;text-align:center}
+h1{color:#f5b44b;margin:0;font-size:34px}
+h2{color:#f5b44b;margin-top:35px}
+.section{padding:20px;max-width:1100px;margin:auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px}
+.card{background:#1b1b1b;border-radius:18px;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,.4)}
+.card img{width:100%;height:180px;object-fit:cover}
+.card div{padding:18px}
+.price{color:#f5b44b;font-size:22px;font-weight:bold}
+.btn{display:block;background:#25D366;color:white;text-align:center;padding:14px;border-radius:10px;text-decoration:none;font-weight:bold;margin-top:12px}
+footer{text-align:center;padding:30px;color:#ccc}
 </style>
 </head>
-
 <body>
 
 <header>
 <h1>Grill Time Oostende</h1>
 <p>Hotel & Apartment Orders</p>
+<p>Pizza • Kapsalon • Grill • Wraps</p>
 </header>
 
+<div class="section">
+<h2>Pizza</h2>
+<div class="grid">
+
 <div class="card">
-<h2>Loaded Kapsalon</h2>
-<p class="price">€16</p>
+<img src="https://images.unsplash.com/photo-1628840042765-356cda07504e?auto=format&fit=crop&w=900&q=80">
+<div>
+<h3>Large Pepperoni</h3>
+<p class="price">€17.99</p>
+<a class="btn" href="https://wa.me/324XXXXXXXX?text=Hello%20Grill%20Time,%20I%20want%20to%20order%20Large%20Pepperoni">Order on WhatsApp</a>
+</div>
 </div>
 
 <div class="card">
-<h2>Loaded Doner Pizza</h2>
-<p class="price">€18</p>
+<img src="https://images.unsplash.com/photo-1593560708920-61dd98c46a4e?auto=format&fit=crop&w=900&q=80">
+<div>
+<h3>Large Scampi</h3>
+<p class="price">€19.99</p>
+<a class="btn" href="https://wa.me/324XXXXXXXX?text=Hello%20Grill%20Time,%20I%20want%20to%20order%20Large%20Scampi">Order on WhatsApp</a>
+</div>
 </div>
 
 <div class="card">
-<h2>Beach Box</h2>
-<p class="price">€19</p>
+<img src="https://images.unsplash.com/photo-1601924582975-7b3d8f8f9f66?auto=format&fit=crop&w=900&q=80">
+<div>
+<h3>Large Hawaii</h3>
+<p class="price">€17.99</p>
+<a class="btn" href="https://wa.me/324XXXXXXXX?text=Hello%20Grill%20Time,%20I%20want%20to%20order%20Large%20Hawaii">Order on WhatsApp</a>
+</div>
+</div>
+
+</div>
+
+<h2>Boxes</h2>
+<div class="grid">
+
+<div class="card">
+<img src="https://images.unsplash.com/photo-1633945274405-b6c8069047b0?auto=format&fit=crop&w=900&q=80">
+<div>
+<h3>Kapsalon</h3>
+<p>Doner, fries, melted cheese, vegetables and sauce.</p>
+<p class="price">€14.99</p>
+<a class="btn" href="https://wa.me/324XXXXXXXX?text=Hello%20Grill%20Time,%20I%20want%20to%20order%20Kapsalon">Order on WhatsApp</a>
+</div>
 </div>
 
 <div class="card">
-<h2>Chef Grill Plate</h2>
-<p class="price">€29.50</p>
+<img src="https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=900&q=80">
+<div>
+<h3>Beach Box</h3>
+<p>Wrap pieces, onion rings, vegetables apart, hummus, fries.</p>
+<p class="price">€17.99</p>
+<p class="price">For two: €27.99</p>
+<a class="btn" href="https://wa.me/324XXXXXXXX?text=Hello%20Grill%20Time,%20I%20want%20to%20order%20Beach%20Box">Order on WhatsApp</a>
+</div>
 </div>
 
-<h3>How To Order</h3>
+</div>
 
-<p>
-1. Choose your meal<br>
-2. Send order on WhatsApp<br>
-3. Receive payment link<br>
-4. Pickup or nearby delivery
-</p>
+<h2>Wrap & Plates</h2>
+<div class="grid">
 
-<a class="button"
-href="https://wa.me/32490396181">
-Order on WhatsApp
-</a>
+<div class="card">
+<img src="https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?auto=format&fit=crop&w=900&q=80">
+<div>
+<h3>Wrap Doner</h3>
+<p class="price">€10.99</p>
+<a class="btn" href="https://wa.me/324XXXXXXXX?text=Hello%20Grill%20Time,%20I%20want%20to%20order%20Wrap%20Doner">Order on WhatsApp</a>
+</div>
+</div>
 
-<p>
-Albert I Promenade 9<br>
-8400 Oostende
-</p>
+<div class="card">
+<img src="https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=900&q=80">
+<div>
+<h3>Doner Plate</h3>
+<p class="price">€18.99</p>
+<a class="btn" href="https://wa.me/32490396181?text=Hello%20Grill%20Time,%20I%20want%20to%20order%20Doner%20Plate">Order on WhatsApp</a>
+</div>
+</div>
+
+<div class="card">
+<img src="https://images.unsplash.com/photo-1529193591184-b1d58069ecdd?auto=format&fit=crop&w=900&q=80">
+<div>
+<h3>Grill Mix Speciaal</h3>
+<p>Kotlet, chicken brochette, köfte, chicken wings, rice, fries and sauce.</p>
+<p class="price">€36.99</p>
+<a class="btn" href="https://wa.me/32490396181?text=Hello%20Grill%20Time,%20I%20want%20to%20order%20Grill%20Mix%20Speciaal">Order on WhatsApp</a>
+</div>
+</div>
+
+</div>
+</div>
+
+<footer>
+<p>📍 Albert I Promenade 9, 8400 Oostende</p>
+<p>Order by WhatsApp. We send you a payment link.</p>
+</footer>
 
 </body>
 </html>

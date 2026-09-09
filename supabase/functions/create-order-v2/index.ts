@@ -1,7 +1,8 @@
-import Stripe from 'npm:stripe@^22'
-import { createClient } from 'npm:@supabase/supabase-js@2'
+import Stripe from 'npm:stripe@22.4.0'
+import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
 
 const stripeKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim()
+const stripePaymentMethodConfiguration = (Deno.env.get('STRIPE_PAYMENT_METHOD_CONFIGURATION_ID') || '').trim()
 const stripe = new Stripe(stripeKey)
 const allowedOrigins = new Set([
   'https://grilltime.be', 'https://www.grilltime.be',
@@ -10,7 +11,6 @@ const allowedOrigins = new Set([
 const RESTAURANT_LAT = 51.234848445475095
 const RESTAURANT_LON = 2.9202298934891577
 const OUTSIDE_MESSAGE = 'Helaas leveren we momenteel alleen binnen 4 km in Oostende. Je kunt je bestelling wel bij Grill Time afhalen.'
-const WELCOME_DISCOUNT_PERCENT = 10
 
 type SelectionGroup = { key?: string; chosen?: Array<{ raw?: string; label?: string } | string> }
 type CartItem = { productId: string; qty: number; itemNote?: string; selectedOptions?: Record<string, string[]>; selections?: SelectionGroup[] }
@@ -24,6 +24,10 @@ function normalizePhone(value: unknown) {
   if (digits.startsWith('0032')) digits = '0' + digits.slice(4)
   else if (digits.startsWith('32') && digits.length >= 10) digits = '0' + digits.slice(2)
   return digits
+}
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 function cors(req: Request) {
   const origin = req.headers.get('origin') || ''
@@ -144,6 +148,11 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json()
+    const requestId = clean(body.requestId, 36)
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return json(req, { error: 'Ongeldige of ontbrekende aanvraagcode.' }, 400)
+    const fingerprintBody = { ...body }
+    delete fingerprintBody.requestId
+    const requestFingerprint = await sha256Hex(JSON.stringify(fingerprintBody))
     const sb = adminClient()
     const { data: settings, error: settingsError } = await sb.from('store_settings').select('*').eq('id', 'main').single()
     if (settingsError) throw settingsError
@@ -268,87 +277,88 @@ Deno.serve(async (req) => {
     if (subtotalCents < 50) return json(req, { error: 'Bestelbedrag is te laag.' }, 400)
     if (orderType === 'delivery' && subtotalCents < Number(settings.delivery_min_cents)) return json(req, { error: 'Minimum bestelling aan eten voor bezorging is €15,00, exclusief bezorgkosten.' }, 400)
 
-    const { data: matchingCustomers, error: matchingError } = await sb.from('customers').select('id,order_count').eq('phone_normalized', phoneNormalized)
-    if (matchingError) throw matchingError
-    const priorPaidOrders = (matchingCustomers || []).reduce((sum: number, c: any) => sum + Number(c.order_count || 0), 0)
-    const discountCents = priorPaidOrders === 0 ? Math.round(subtotalCents * WELCOME_DISCOUNT_PERCENT / 100) : 0
-    const discountCode = discountCents ? 'WELCOME10' : null
-    const totalCents = subtotalCents - discountCents + deliveryFeeCents
-
-    let customerId: string
-    const existing = (matchingCustomers || [])[0] as any
-    if (existing?.id) {
-      const { data, error } = await sb.from('customers').update({ name: customer.name, phone: customer.phone, email: customer.email, phone_normalized: phoneNormalized }).eq('id', existing.id).select('id').single()
-      if (error) throw error
-      customerId = data.id
-    } else {
-      const { data, error } = await sb.from('customers').insert({ name: customer.name, phone: customer.phone, email: customer.email, phone_normalized: phoneNormalized }).select('id').single()
-      if (error) throw error
-      customerId = data.id
-    }
-
-    let firstCashPhoneWarning = false
-    if (paymentMethod === 'cash' && totalCents > 5000) {
-      const { count, error } = await sb.from('orders').select('id', { count: 'exact', head: true }).eq('customer_id', customerId).eq('payment_method', 'cash').not('status', 'in', '(cancelled,rejected)')
-      if (error) throw error
-      firstCashPhoneWarning = (count || 0) === 0
-    }
-
     const addressExtra = orderType === 'delivery' ? clean(body.address?.extra, 120) || null : null
-    const { data: order, error: orderError } = await sb.from('orders').insert({
-      customer_id: customerId, customer_name: customer.name, customer_phone: customer.phone, customer_email: customer.email,
-      order_type: orderType, requested_time: requested.label, requested_at: requested.startAt, requested_window_end: requested.endAt,
-      address_line: address ? `${address.street} ${address.houseNumber}` : null, address_extra: addressExtra,
-      postal_code: address?.postcode || null, city: address?.city || null, notes: clean(body.notes, 500) || null,
-      status: paymentMethod === 'online' ? 'pending_payment' : 'new', payment_status: 'unpaid', payment_method: paymentMethod,
-      subtotal_cents: subtotalCents, discount_cents: discountCents, discount_code: discountCode,
-      delivery_fee_cents: deliveryFeeCents, delivery_distance_km: distanceKm === null ? null : Number(distanceKm.toFixed(2)),
-      delivery_distance_method: orderType === 'delivery' ? 'driving' : null, total_cents: totalCents, currency: 'eur',
-      terms_accepted_at: body.termsAccepted === true ? new Date().toISOString() : null, marketing_consent: body.marketingConsent === true,
-      first_cash_phone_warning: firstCashPhoneWarning,
-    }).select('id,order_number,total_cents,tracking_token').single()
-    if (orderError) throw orderError
+    const { data: order, error: orderError } = await sb.rpc('service_create_order_v2', {
+      p_request_id: requestId,
+      p_request_fingerprint: requestFingerprint,
+      p_customer: { name: customer.name, phone: customer.phone, email: customer.email, phone_normalized: phoneNormalized },
+      p_order: {
+        order_type: orderType, payment_method: paymentMethod, requested_time: requested.label,
+        requested_at: requested.startAt, requested_window_end: requested.endAt,
+        address_line: address ? `${address.street} ${address.houseNumber}` : null,
+        address_extra: addressExtra, postal_code: address?.postcode || null, city: address?.city || null,
+        notes: clean(body.notes, 500) || null, subtotal_cents: subtotalCents,
+        delivery_fee_cents: deliveryFeeCents,
+        delivery_distance_km: distanceKm === null ? null : Number(distanceKm.toFixed(2)),
+        delivery_distance_method: orderType === 'delivery' ? 'driving' : null,
+        terms_accepted: body.termsAccepted === true, marketing_consent: body.marketingConsent === true,
+      },
+      p_items: checkedItems.map(i => ({
+        product_id: i.productId, product_name: i.name, quantity: i.qty,
+        unit_price_cents: i.unitPriceCents, line_total_cents: i.lineTotalCents,
+        selected_options: i.selectedOptions, details: i.details, item_note: i.itemNote,
+      })),
+    })
+    if (orderError) {
+      if (String(orderError.message || '').includes('different order data')) return json(req, { error: 'Deze aanvraagcode hoort bij een andere bestelling. Probeer opnieuw.', newRequestRequired: true }, 409)
+      throw orderError
+    }
+    if (!order?.orderId) throw new Error('Bestelling werd niet correct opgeslagen.')
 
-    const { error: itemError } = await sb.from('order_items').insert(checkedItems.map(i => ({
-      order_id: order.id, product_id: i.productId, product_name: i.name, quantity: i.qty,
-      unit_price_cents: i.unitPriceCents, line_total_cents: i.lineTotalCents,
-      selected_options: i.selectedOptions, details: i.details, item_note: i.itemNote,
-    })))
-    if (itemError) throw itemError
+    const discountCents = Number(order.discountCents || 0)
+    const discountCode = order.discountCode || null
+    const totalCents = Number(order.totalCents)
+    const firstCashPhoneWarning = Boolean(order.firstCashPhoneWarning)
 
     const result = {
-      ok: true, orderNumber: order.order_number, trackingToken: order.tracking_token,
-      subtotalCents, discountCents, discountCode, deliveryFeeCents,
-      deliveryDistanceKm: distanceKm === null ? null : Number(distanceKm.toFixed(2)), totalCents: order.total_cents,
+      ok: true, orderNumber: order.orderNumber, trackingToken: order.trackingToken,
+      subtotalCents: Number(order.subtotalCents), discountCents, discountCode,
+      deliveryFeeCents: Number(order.deliveryFeeCents || 0),
+      deliveryDistanceKm: order.deliveryDistanceKm === null ? null : Number(order.deliveryDistanceKm), totalCents,
       firstCashPhoneWarning,
     }
     if (paymentMethod !== 'online') return json(req, { ...result, offlineOrder: true, paymentMethod })
+    if (!stripePaymentMethodConfiguration) {
+      await sb.from('orders').update({ status: 'cancelled', payment_status: 'failed' }).eq('id', order.orderId)
+      return json(req, { error: 'Online betalen wordt nog veilig geconfigureerd. Kies voorlopig cash of terminal in de zaak.', newRequestRequired: true }, 503)
+    }
 
     const siteUrl = (Deno.env.get('SITE_URL') || 'https://grilltime.be').replace(/\/$/, '')
     try {
-      const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = checkedItems.map(i => ({
-        quantity: i.qty,
-        price_data: { currency: 'eur', unit_amount: i.unitPriceCents, product_data: { name: i.name, description: [...i.details, ...(i.itemNote ? [`Opmerking: ${i.itemNote}`] : [])].join(' · ').slice(0, 450) || undefined } },
+      const { data: storedItems, error: storedItemsError } = await sb.from('order_items').select('product_name,quantity,unit_price_cents,details,item_note').eq('order_id', order.orderId).order('created_at')
+      if (storedItemsError) throw storedItemsError
+      const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = (storedItems || []).map((i: any) => ({
+        quantity: i.quantity,
+        price_data: { currency: 'eur', unit_amount: i.unit_price_cents, product_data: { name: i.product_name, description: [...(Array.isArray(i.details) ? i.details : []), ...(i.item_note ? [`Opmerking: ${i.item_note}`] : [])].join(' · ').slice(0, 450) || undefined } },
       }))
-      if (deliveryFeeCents > 0) lineItems.push({ quantity: 1, price_data: { currency: 'eur', unit_amount: deliveryFeeCents, product_data: { name: 'Bezorgkosten' } } })
+      if (!lineItems.length) throw new Error('Bestelregels ontbreken.')
+      if (result.deliveryFeeCents > 0) lineItems.push({ quantity: 1, price_data: { currency: 'eur', unit_amount: result.deliveryFeeCents, product_data: { name: 'Bezorgkosten' } } })
       let discounts: Stripe.Checkout.SessionCreateParams.Discount[] | undefined
       if (discountCents > 0) {
-        const coupon = await stripe.coupons.create({ amount_off: discountCents, currency: 'eur', duration: 'once', name: 'Welkomstkorting 10%' })
+        const coupon = await stripe.coupons.create(
+          { amount_off: discountCents, currency: 'eur', duration: 'once', name: 'Welkomstkorting 10%' },
+          { idempotencyKey: `grilltime-coupon-${requestId}` },
+        )
         discounts = [{ coupon: coupon.id }]
       }
+      if (order.stripeCheckoutSessionId) {
+        const existingSession = await stripe.checkout.sessions.retrieve(order.stripeCheckoutSessionId)
+        if (existingSession.payment_status === 'paid') return json(req, { ...result, offlineOrder: true, paymentMethod, alreadyPaid: true })
+        if (existingSession.status === 'open' && existingSession.url) return json(req, { ...result, checkoutUrl: existingSession.url, mode: stripeKey.includes('_test_') ? 'test' : 'live', replayed: true })
+        return json(req, { error: 'De vorige betaalpagina is verlopen. Start de bestelling opnieuw.', newRequestRequired: true }, 409)
+      }
       const session = await stripe.checkout.sessions.create({
-        mode: 'payment', payment_method_types: ['card', 'bancontact'], line_items: lineItems, discounts,
-        customer_email: customer.email || undefined, client_reference_id: order.id,
-        success_url: `${siteUrl}/order/?payment=success&track=${order.tracking_token}&session_id={CHECKOUT_SESSION_ID}`,
+        mode: 'payment', payment_method_configuration: stripePaymentMethodConfiguration, line_items: lineItems, discounts,
+        customer_email: customer.email || undefined, client_reference_id: order.orderId,
+        success_url: `${siteUrl}/order/?payment=success&track=${order.trackingToken}&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${siteUrl}/order/?payment=cancelled`,
-        metadata: { order_id: order.id, order_number: String(order.order_number), tracking_token: order.tracking_token },
+        metadata: { order_id: order.orderId, order_number: String(order.orderNumber), tracking_token: order.trackingToken, client_request_id: requestId },
         locale: body.locale === 'en' ? 'en' : 'nl',
-      })
-      const { error: updateError } = await sb.from('orders').update({ stripe_checkout_session_id: session.id }).eq('id', order.id)
+      }, { idempotencyKey: `grilltime-checkout-${requestId}` })
+      const { error: updateError } = await sb.from('orders').update({ stripe_checkout_session_id: session.id }).eq('id', order.orderId).eq('client_request_id', requestId)
       if (updateError) throw updateError
       return json(req, { ...result, checkoutUrl: session.url, mode: stripeKey.includes('_test_') ? 'test' : 'live' })
     } catch (stripeError) {
-      await sb.from('orders').update({ status: 'cancelled', payment_status: 'failed' }).eq('id', order.id)
       throw stripeError
     }
   } catch (error) {

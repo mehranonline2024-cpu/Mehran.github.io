@@ -2,6 +2,26 @@
 
 Status: feature branch only. Do not merge to `main` until every critical test below passes.
 
+## Implementation progress
+
+- [x] The unused Ireland Supabase project was removed by the owner.
+- [x] The Frankfurt project `Grill Time Oostende 1` is the only remaining project and is healthy.
+- [x] Stripe and Supabase SDK versions are pinned; no floating production dependencies remain in the v2 functions.
+- [x] Stripe Checkout uses Dashboard-controlled dynamic payment methods instead of hardcoded method types.
+- [ ] Create and connect a dedicated Stripe payment-method configuration containing only Bancontact and cards.
+- [x] V2 privileged database functions use an empty `search_path` and are not executable by public roles.
+- [x] Operational settings and ingredient dependency tables are no longer directly readable by anonymous visitors.
+- [x] Missing foreign-key indexes are included in the v2 migration.
+- [x] Apply and verify the additive v2 migration in the Frankfurt project without replacing v1.
+- [x] Deploy the four separately named v2 Edge Functions; v1 remains active.
+- [x] Add atomic customer/order/item creation and stable client request IDs.
+- [x] Add Stripe idempotency keys for discount coupons and Checkout Sessions.
+- [x] Add database rollback/replay and source-contract tests for duplicate requests.
+- [x] Run the database transaction tests in Frankfurt inside a rollback-only test transaction.
+- [ ] Connect a real printer worker and a true background phone notification channel.
+- [ ] Register and test the Stripe webhook; production remains disabled until the launch gate passes.
+- [ ] Complete Dutch and English customer/admin/legal text.
+
 ## Activation order for the test session
 
 1. Apply `supabase/migrations/20260908_order_operations_v2.sql`.
@@ -51,6 +71,7 @@ Status: feature branch only. Do not merge to `main` until every critical test be
 - “Bestelling onderweg” updates the customer to “Je bestelling is onderweg. Smakelijk!”
 - Complete stops status polling.
 - Rejecting a paid online order creates one idempotent Stripe refund.
+- Repeating the same create-order request creates only one order and one Stripe Checkout Session.
 - A first cash order above €50 cannot be accepted until telephone confirmation is acknowledged.
 - The admin can pause/resume delivery, close/open the store and check the route service.
 - Products, options and ingredients have Available / Sold out today / Hidden states.

@@ -11,12 +11,33 @@ let cart = JSON.parse(localStorage.getItem('gt-cart-v4') || '[]')
 let selected = null, currentQty = 1, activeCategory = 'Alles', orderType = 'pickup', paymentMethod = 'online'
 let checkoutDraft = {}, storeConfig = null, selectedAddress = null, addressSuggestions = [], deliveryQuote = null
 let addressTimer = null, trackingTimer = null
+let checkoutRequestIdentity = null
+const CHECKOUT_REQUEST_KEY = 'gt-checkout-request-v2'
 
 const euro = n => new Intl.NumberFormat('nl-BE', { style: 'currency', currency: 'EUR' }).format(Number(n || 0))
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]))
 const toast = m => { const t = document.getElementById('toast'); t.textContent = m; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2600) }
 function toggle(id, on) { document.getElementById(id).classList.toggle('open', on) }
 function save() { localStorage.setItem('gt-cart-v4', JSON.stringify(cart)); renderCartBar() }
+function newRequestId() {
+  if (crypto.randomUUID) return crypto.randomUUID()
+  const bytes = crypto.getRandomValues(new Uint8Array(16)); bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128
+  const hex = [...bytes].map(x => x.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+function requestIdFor(orderPayload) {
+  const fingerprint = JSON.stringify(orderPayload)
+  try { checkoutRequestIdentity = JSON.parse(sessionStorage.getItem(CHECKOUT_REQUEST_KEY) || 'null') } catch (_) { checkoutRequestIdentity = null }
+  if (!checkoutRequestIdentity || checkoutRequestIdentity.fingerprint !== fingerprint || !/^[0-9a-f-]{36}$/i.test(checkoutRequestIdentity.id || '')) {
+    checkoutRequestIdentity = { id: newRequestId(), fingerprint }
+    try { sessionStorage.setItem(CHECKOUT_REQUEST_KEY, JSON.stringify(checkoutRequestIdentity)) } catch (_) {}
+  }
+  return checkoutRequestIdentity.id
+}
+function clearRequestId() {
+  checkoutRequestIdentity = null
+  try { sessionStorage.removeItem(CHECKOUT_REQUEST_KEY) } catch (_) {}
+}
 async function get(path) {
   const r = await fetch(CFG.url + path, { headers: H })
   const b = await r.json()
@@ -275,7 +296,7 @@ async function pollTracking(token) {
   clearTimeout(trackingTimer)
   try {
     const o = await get('/functions/v1/order-status-v2?token=' + encodeURIComponent(token))
-    if (o.paymentStatus === 'paid') { cart = []; checkoutDraft = {}; save() }
+    if (o.paymentStatus === 'paid') { cart = []; checkoutDraft = {}; clearRequestId(); save() }
     renderTracking(o)
     if (!['completed', 'rejected', 'cancelled'].includes(o.status)) trackingTimer = setTimeout(() => pollTracking(token), 5000)
   } catch (err) {
@@ -296,13 +317,16 @@ async function submitOrder(e) {
   captureCheckoutDraft()
   const b = document.getElementById('checkoutSubmit'); b.disabled = true; b.textContent = paymentMethod === 'online' ? 'Beschikbaarheid en betaling controleren…' : 'Bestelling plaatsen…'
   try {
-    const r = await fetch(CFG.url + '/functions/v1/create-order-v2', { method: 'POST', headers: H, body: JSON.stringify(payload()) })
+    const orderPayload = payload()
+    orderPayload.requestId = requestIdFor(orderPayload)
+    const r = await fetch(CFG.url + '/functions/v1/create-order-v2', { method: 'POST', headers: H, body: JSON.stringify(orderPayload) })
     const d = await r.json()
     if (!r.ok) {
+      if (d.newRequestRequired) clearRequestId()
       if (d.offerPickup) { deliveryQuote = { deliverable: false, error: d.error }; renderCheckout() }
       throw new Error(d.error || 'Bestelling mislukt')
     }
-    if (d.offlineOrder) { cart = []; save(); toggle('checkoutOverlay', false); startTracking(d.trackingToken, d); return }
+    if (d.offlineOrder) { cart = []; clearRequestId(); save(); toggle('checkoutOverlay', false); startTracking(d.trackingToken, d); return }
     if (!d.checkoutUrl) throw new Error('Online betaling kon niet worden gestart')
     localStorage.setItem('gt-pending-order-token', d.trackingToken)
     location.assign(d.checkoutUrl)

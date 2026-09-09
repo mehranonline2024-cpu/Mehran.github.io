@@ -1,4 +1,4 @@
-import { createClient } from 'npm:@supabase/supabase-js@2'
+import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
 
 const allowedOrigins = new Set([
   'https://grilltime.be', 'https://www.grilltime.be',

@@ -45,14 +45,26 @@ alter table public.orders
   add column if not exists accepted_by uuid references auth.users(id) on delete set null,
   add column if not exists rejection_reason text,
   add column if not exists first_cash_phone_warning boolean not null default false,
-  add column if not exists stripe_refund_id text;
+  add column if not exists stripe_refund_id text,
+  add column if not exists client_request_id uuid,
+  add column if not exists request_fingerprint text;
 
 create unique index if not exists orders_tracking_token_key
   on public.orders (tracking_token);
+create unique index if not exists orders_client_request_id_key
+  on public.orders (client_request_id) where client_request_id is not null;
 create index if not exists orders_status_created_at_idx
   on public.orders (status, created_at desc);
 create index if not exists orders_requested_at_idx
   on public.orders (requested_at) where requested_at is not null;
+create index if not exists orders_customer_id_idx
+  on public.orders (customer_id);
+create index if not exists order_items_order_id_idx
+  on public.order_items (order_id);
+create index if not exists order_items_product_id_idx
+  on public.order_items (product_id);
+create index if not exists product_option_groups_group_id_idx
+  on public.product_option_groups (group_id);
 
 alter table public.orders drop constraint if exists orders_status_check;
 alter table public.orders add constraint orders_status_check check (
@@ -187,7 +199,7 @@ create or replace function public.log_order_status_change()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 begin
   if tg_op = 'INSERT' or new.status is distinct from old.status then
@@ -197,6 +209,7 @@ begin
   return new;
 end;
 $$;
+revoke execute on function public.log_order_status_change() from public,anon,authenticated;
 
 drop trigger if exists orders_log_status_change on public.orders;
 create trigger orders_log_status_change
@@ -207,7 +220,7 @@ create or replace function public.queue_kitchen_receipt()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   v_items jsonb;
@@ -241,6 +254,7 @@ begin
   return new;
 end;
 $$;
+revoke execute on function public.queue_kitchen_receipt() from public,anon,authenticated;
 
 drop trigger if exists orders_queue_kitchen_receipt on public.orders;
 create trigger orders_queue_kitchen_receipt
@@ -268,7 +282,7 @@ create or replace function public.service_mark_cash_paid(p_order_id uuid)
 returns uuid
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   v_customer_id uuid;
@@ -290,6 +304,161 @@ $$;
 revoke all on function public.service_mark_cash_paid(uuid) from public,anon,authenticated;
 grant execute on function public.service_mark_cash_paid(uuid) to service_role;
 
+-- Creates the customer, order and order lines in one database transaction.
+-- The Edge Function validates catalogue data first; this RPC provides atomicity
+-- and guarantees that retrying one client request never creates a second order.
+create or replace function public.service_create_order_v2(
+  p_request_id uuid,
+  p_request_fingerprint text,
+  p_customer jsonb,
+  p_order jsonb,
+  p_items jsonb
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_existing public.orders%rowtype;
+  v_customer_id uuid;
+  v_order public.orders%rowtype;
+  v_phone_normalized text := nullif(trim(p_customer->>'phone_normalized'), '');
+  v_phone text := nullif(trim(p_customer->>'phone'), '');
+  v_name text := nullif(trim(p_customer->>'name'), '');
+  v_email text := nullif(trim(p_customer->>'email'), '');
+  v_order_type text := p_order->>'order_type';
+  v_payment_method text := p_order->>'payment_method';
+  v_subtotal_cents integer := (p_order->>'subtotal_cents')::integer;
+  v_delivery_fee_cents integer := coalesce((p_order->>'delivery_fee_cents')::integer, 0);
+  v_discount_cents integer;
+  v_total_cents integer;
+  v_prior_order_count integer;
+  v_prior_cash_count integer;
+  v_first_cash_warning boolean := false;
+  v_item jsonb;
+begin
+  if p_request_id is null then raise exception 'request_id is required'; end if;
+  if p_request_fingerprint !~ '^[0-9a-f]{64}$' then raise exception 'invalid request fingerprint'; end if;
+  if v_phone_normalized is null or v_phone is null or v_name is null then raise exception 'invalid customer'; end if;
+  if v_order_type not in ('pickup','delivery') then raise exception 'invalid order type'; end if;
+  if v_payment_method not in ('online','cash','terminal') then raise exception 'invalid payment method'; end if;
+  if v_order_type = 'delivery' and v_payment_method = 'terminal' then raise exception 'terminal is not available for delivery'; end if;
+  if v_subtotal_cents < 50 or v_delivery_fee_cents < 0 then raise exception 'invalid totals'; end if;
+  if jsonb_typeof(p_items) is distinct from 'array' or jsonb_array_length(p_items) = 0 then raise exception 'items are required'; end if;
+
+  -- Serialize retries for this request before checking whether it already exists.
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_request_id::text, 0));
+  select * into v_existing from public.orders where client_request_id = p_request_id;
+  if found then
+    if v_existing.request_fingerprint is distinct from p_request_fingerprint then
+      raise exception 'request_id was already used with different order data';
+    end if;
+    return jsonb_build_object(
+      'orderId',v_existing.id,'orderNumber',v_existing.order_number,
+      'trackingToken',v_existing.tracking_token,'customerId',v_existing.customer_id,
+      'subtotalCents',v_existing.subtotal_cents,'discountCents',v_existing.discount_cents,
+      'discountCode',v_existing.discount_code,'deliveryFeeCents',v_existing.delivery_fee_cents,
+      'deliveryDistanceKm',v_existing.delivery_distance_km,'totalCents',v_existing.total_cents,
+      'firstCashPhoneWarning',v_existing.first_cash_phone_warning,
+      'paymentMethod',v_existing.payment_method,'paymentStatus',v_existing.payment_status,
+      'status',v_existing.status,'stripeCheckoutSessionId',v_existing.stripe_checkout_session_id,
+      'replayed',true
+    );
+  end if;
+
+  -- Serialize first-order discount and first-cash-warning decisions per phone.
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_phone_normalized, 1));
+  select id into v_customer_id
+    from public.customers
+   where phone_normalized = v_phone_normalized or phone = v_phone
+   order by case when phone_normalized = v_phone_normalized then 0 else 1 end, created_at
+   limit 1 for update;
+
+  if v_customer_id is null then
+    begin
+      insert into public.customers(name,phone,email,phone_normalized)
+      values (v_name,v_phone,v_email,v_phone_normalized)
+      returning id into v_customer_id;
+    exception when unique_violation then
+      select id into v_customer_id from public.customers
+       where phone_normalized = v_phone_normalized or phone = v_phone
+       order by created_at limit 1 for update;
+      if v_customer_id is null then raise; end if;
+    end;
+  else
+    update public.customers
+       set name=v_name, phone=v_phone, email=coalesce(v_email,email),
+           phone_normalized=v_phone_normalized, updated_at=now()
+     where id=v_customer_id;
+  end if;
+
+  select count(*)::integer into v_prior_order_count
+    from public.orders
+   where customer_id=v_customer_id and status not in ('cancelled','rejected');
+  v_discount_cents := case when v_prior_order_count=0 then round(v_subtotal_cents * 0.10)::integer else 0 end;
+  v_total_cents := v_subtotal_cents - v_discount_cents + v_delivery_fee_cents;
+
+  if v_payment_method='cash' and v_total_cents>5000 then
+    select count(*)::integer into v_prior_cash_count
+      from public.orders
+     where customer_id=v_customer_id and payment_method='cash'
+       and status not in ('cancelled','rejected');
+    v_first_cash_warning := v_prior_cash_count=0;
+  end if;
+
+  insert into public.orders(
+    customer_id,customer_name,customer_phone,customer_email,order_type,
+    requested_time,requested_at,requested_window_end,address_line,address_extra,
+    postal_code,city,notes,status,payment_status,payment_method,subtotal_cents,
+    discount_cents,discount_code,delivery_fee_cents,delivery_distance_km,
+    delivery_distance_method,total_cents,currency,terms_accepted_at,
+    marketing_consent,first_cash_phone_warning,client_request_id,request_fingerprint
+  ) values (
+    v_customer_id,v_name,v_phone,v_email,v_order_type,
+    coalesce(nullif(p_order->>'requested_time',''),'Zo snel mogelijk'),
+    nullif(p_order->>'requested_at','')::timestamptz,
+    nullif(p_order->>'requested_window_end','')::timestamptz,
+    nullif(p_order->>'address_line',''),nullif(p_order->>'address_extra',''),
+    nullif(p_order->>'postal_code',''),nullif(p_order->>'city',''),nullif(p_order->>'notes',''),
+    case when v_payment_method='online' then 'pending_payment' else 'new' end,
+    'unpaid',v_payment_method,v_subtotal_cents,v_discount_cents,
+    case when v_discount_cents>0 then 'WELCOME10' else null end,
+    v_delivery_fee_cents,nullif(p_order->>'delivery_distance_km','')::numeric,
+    nullif(p_order->>'delivery_distance_method',''),v_total_cents,'eur',
+    case when coalesce((p_order->>'terms_accepted')::boolean,false) then now() else null end,
+    coalesce((p_order->>'marketing_consent')::boolean,false),v_first_cash_warning,
+    p_request_id,p_request_fingerprint
+  ) returning * into v_order;
+
+  for v_item in select value from jsonb_array_elements(p_items)
+  loop
+    insert into public.order_items(
+      order_id,product_id,product_name,quantity,unit_price_cents,line_total_cents,
+      selected_options,details,item_note
+    ) values (
+      v_order.id,nullif(v_item->>'product_id',''),v_item->>'product_name',
+      (v_item->>'quantity')::integer,(v_item->>'unit_price_cents')::integer,
+      (v_item->>'line_total_cents')::integer,coalesce(v_item->'selected_options','{}'::jsonb),
+      coalesce(v_item->'details','[]'::jsonb),nullif(v_item->>'item_note','')
+    );
+  end loop;
+
+  return jsonb_build_object(
+    'orderId',v_order.id,'orderNumber',v_order.order_number,'trackingToken',v_order.tracking_token,
+    'customerId',v_customer_id,'subtotalCents',v_order.subtotal_cents,
+    'discountCents',v_order.discount_cents,'discountCode',v_order.discount_code,
+    'deliveryFeeCents',v_order.delivery_fee_cents,'deliveryDistanceKm',v_order.delivery_distance_km,
+    'totalCents',v_order.total_cents,'firstCashPhoneWarning',v_order.first_cash_phone_warning,
+    'paymentMethod',v_order.payment_method,'paymentStatus',v_order.payment_status,
+    'status',v_order.status,'stripeCheckoutSessionId',v_order.stripe_checkout_session_id,
+    'replayed',false
+  );
+end;
+$$;
+revoke all on function public.service_create_order_v2(uuid,text,jsonb,jsonb,jsonb) from public,anon,authenticated;
+grant execute on function public.service_create_order_v2(uuid,text,jsonb,jsonb,jsonb) to service_role;
+
 alter table public.store_settings enable row level security;
 alter table public.ingredients enable row level security;
 alter table public.product_ingredient_dependencies enable row level security;
@@ -298,55 +467,51 @@ alter table public.order_events enable row level security;
 alter table public.printer_jobs enable row level security;
 
 drop policy if exists "public read store settings" on public.store_settings;
-create policy "public read store settings" on public.store_settings
-for select to anon,authenticated using (true);
 drop policy if exists "public read ingredients" on public.ingredients;
-create policy "public read ingredients" on public.ingredients
-for select to anon,authenticated using (availability_status <> 'hidden');
 drop policy if exists "public read product ingredient dependencies" on public.product_ingredient_dependencies;
-create policy "public read product ingredient dependencies" on public.product_ingredient_dependencies
-for select to anon,authenticated using (true);
 drop policy if exists "public read option ingredient dependencies" on public.option_value_ingredient_dependencies;
-create policy "public read option ingredient dependencies" on public.option_value_ingredient_dependencies
-for select to anon,authenticated using (true);
 
 drop policy if exists "restaurant admins manage store settings" on public.store_settings;
 create policy "restaurant admins manage store settings" on public.store_settings
 for update to authenticated
-using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()))
-with check ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()));
+using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())))
+with check ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())));
+drop policy if exists "restaurant admins read store settings" on public.store_settings;
+create policy "restaurant admins read store settings" on public.store_settings
+for select to authenticated
+using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())));
 drop policy if exists "restaurant admins manage products" on public.products;
 create policy "restaurant admins manage products" on public.products
 for update to authenticated
-using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()))
-with check ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()));
+using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())))
+with check ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())));
 drop policy if exists "restaurant admins read all products" on public.products;
 create policy "restaurant admins read all products" on public.products
 for select to authenticated
-using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()));
+using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())));
 drop policy if exists "restaurant admins manage option values" on public.option_values;
 create policy "restaurant admins manage option values" on public.option_values
 for update to authenticated
-using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()))
-with check ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()));
+using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())))
+with check ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())));
 drop policy if exists "restaurant admins read all option values" on public.option_values;
 create policy "restaurant admins read all option values" on public.option_values
 for select to authenticated
-using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()));
+using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())));
 drop policy if exists "restaurant admins manage ingredients" on public.ingredients;
 create policy "restaurant admins manage ingredients" on public.ingredients
 for all to authenticated
-using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()))
-with check ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()));
+using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())))
+with check ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())));
 drop policy if exists "restaurant admins read order events" on public.order_events;
 create policy "restaurant admins read order events" on public.order_events
 for select to authenticated
-using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()));
+using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())));
 drop policy if exists "restaurant admins manage printer jobs" on public.printer_jobs;
 create policy "restaurant admins manage printer jobs" on public.printer_jobs
 for all to authenticated
-using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()))
-with check ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=auth.uid()));
+using ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())))
+with check ((select auth.jwt()->>'aal')='aal2' and exists(select 1 from public.restaurant_admins a where a.user_id=(select auth.uid())));
 
 -- Keep hidden items out of the public catalogue while retaining sold-out items.
 drop policy if exists "public read active products" on public.products;

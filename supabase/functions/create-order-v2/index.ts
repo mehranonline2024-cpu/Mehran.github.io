@@ -6,6 +6,8 @@ const stripePaymentMethodConfiguration = (Deno.env.get('STRIPE_PAYMENT_METHOD_CO
 const stripe = new Stripe(stripeKey)
 const allowedOrigins = new Set([
   'https://grilltime.be', 'https://www.grilltime.be',
+  'https://grilltime-v2-test.snug-bud-2681.chatgpt.site',
+  'https://grilltime-v2-test.mehran-belgie.chatgpt.site',
   'http://localhost:4173', 'http://127.0.0.1:4173',
 ])
 const RESTAURANT_LAT = 51.234848445475095
@@ -162,6 +164,7 @@ Deno.serve(async (req) => {
     const orderType = body.orderType === 'delivery' ? 'delivery' : 'pickup'
     const paymentMethod = ['online', 'cash', 'terminal'].includes(body.paymentMethod) ? body.paymentMethod : 'online'
     if (orderType === 'delivery' && paymentMethod === 'terminal') return json(req, { error: 'Een betaalterminal is niet beschikbaar bij levering.' }, 400)
+    if (origin.endsWith('.chatgpt.site') && paymentMethod === 'online') return json(req, { error: 'Online betalen is uitgeschakeld in de testversie.' }, 400)
     if (paymentMethod === 'online' && !stripeKey) return json(req, { error: 'Online betalen is tijdelijk niet beschikbaar.' }, 503)
 
     const customer = {

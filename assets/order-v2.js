@@ -6,9 +6,10 @@ const CAT_META = {
   'Grill Time Classics': ['🌯', 'Grill Time Classics'], Sides: ['🍟', 'Sides'], Drinks: ['🥤', 'Drinks'],
 }
 const DELIVERY_MIN = 15
+const IS_PREVIEW = location.hostname.endsWith('.chatgpt.site')
 let products = [], groups = {}, links = {}, ingredients = {}, productDeps = {}, optionDeps = {}
 let cart = JSON.parse(localStorage.getItem('gt-cart-v4') || '[]')
-let selected = null, currentQty = 1, activeCategory = 'Alles', orderType = 'pickup', paymentMethod = 'online'
+let selected = null, currentQty = 1, activeCategory = 'Alles', orderType = 'pickup', paymentMethod = IS_PREVIEW ? 'cash' : 'online'
 let checkoutDraft = {}, storeConfig = null, selectedAddress = null, addressSuggestions = [], deliveryQuote = null
 let addressTimer = null, trackingTimer = null
 let checkoutRequestIdentity = null
@@ -206,11 +207,12 @@ function timeOptions() {
   return choices.map(x => x.group ? `<optgroup label="${esc(x.group)}">` : x.close ? '</optgroup>' : `<option value="${esc(x.value)}" ${x.value === chosen ? 'selected' : ''}>${esc(x.label)}</option>`).join('')
 }
 function paymentButtons() {
-  const options = orderType === 'delivery' ? [
+  let options = orderType === 'delivery' ? [
     ['online', '💳', 'Online Bancontact of Visa/Mastercard'], ['cash', '💶', 'Cash bij levering'],
   ] : [
     ['online', '💳', 'Online betalen'], ['cash', '💶', 'Cash in de zaak'], ['terminal', '🏧', 'Betaalterminal in de zaak'],
   ]
+  if (IS_PREVIEW) options = options.filter(([id]) => id !== 'online')
   return `<div class="seg payment-seg ${options.length === 3 ? 'three' : ''}" style="grid-template-columns:${options.length === 3 ? 'repeat(3,1fr)' : '1fr 1fr'}">${options.map(([id, icon, label]) => `<button type="button" class="${paymentMethod === id ? 'active' : ''}" onclick="setPaymentMethod('${id}')"><span class="seg-icon">${icon}</span><span class="seg-copy">${label}<small>${id === 'online' ? 'Veilig via Stripe' : 'Ter plaatse'}</small></span></button>`).join('')}</div>`
 }
 function quoteMarkup() {

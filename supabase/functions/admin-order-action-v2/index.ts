@@ -5,6 +5,8 @@ const stripeKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim()
 const stripe = new Stripe(stripeKey)
 const allowedOrigins = new Set([
   'https://grilltime.be', 'https://www.grilltime.be',
+  'https://grilltime-v2-test.snug-bud-2681.chatgpt.site',
+  'https://grilltime-v2-test.mehran-belgie.chatgpt.site',
   'http://localhost:4173', 'http://127.0.0.1:4173',
 ])
 function cors(req: Request) {

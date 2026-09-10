@@ -8,7 +8,7 @@ const allowedOrigins = new Set(['https://grilltime.be','https://www.grilltime.be
 const RESTAURANT_LAT = 51.2330
 const RESTAURANT_LON = 2.9185
 const DELIVERY_MIN_CENTS = 1500
-const FREE_DELIVERY_CENTS = 5000
+const OUTSIDE_DELIVERY_MESSAGE = 'Helaas leveren we momenteel alleen binnen 4 km in Oostende. Je kunt je bestelling wel bij Grill Time afhalen.'
 const INNER_DISTANCE_KM = 2.5
 const MAX_DISTANCE_KM = 4
 const INNER_FEE_CENTS = 299
@@ -37,8 +37,16 @@ function extractPostcode(value: string) {
 function expectedPlace(value: string) {
   return normalizeText(clean(value,120).replace(/\b\d{4}\b/g,'').replace(/belgi[eë]|belgium/gi,''))
 }
-function candidatePlace(address:any) {
-  return normalizeText(address?.city || address?.town || address?.municipality || address?.village || address?.hamlet || '')
+function isOostende(value: unknown) {
+  return ['oostende', 'ostende', 'ostend'].includes(normalizeText(value))
+}
+function isOostendeAddress(address:any) {
+  return String(address?.country_code || '').toLowerCase() === 'be'
+    && String(address?.postcode || '').trim() === '8400'
+    && [address?.city, address?.town, address?.municipality, address?.village].some(isOostende)
+}
+function outsideDelivery(req: Request) {
+  return json(req, {error:OUTSIDE_DELIVERY_MESSAGE,code:'outside_delivery_area',pickupAvailable:true}, 400)
 }
 function cors(req: Request) {
   const origin = req.headers.get('origin') || ''
@@ -74,28 +82,18 @@ function normalizeSelectedOptions(raw: CartItem): Record<string,string[]> {
 async function geocodeDeliveryAddress(addressLine:string, city:string) {
   const normalizedStreet = normalizeDeliveryStreet(addressLine)
   const q = `${normalizedStreet}, ${city}, Belgium`
-  const expectedPc = extractPostcode(city)
-  const expectedCity = expectedPlace(city)
   const url = new URL('https://nominatim.openstreetmap.org/search')
   url.searchParams.set('format','jsonv2'); url.searchParams.set('limit','8'); url.searchParams.set('countrycodes','be'); url.searchParams.set('addressdetails','1'); url.searchParams.set('q',q)
   const response = await fetch(url,{headers:{'Accept':'application/json','Accept-Language':'nl-BE,nl;q=0.9','User-Agent':'GrillTimeOostende/1.5 (https://grilltime.be)'}})
   if (!response.ok) throw new Error('Adrescontrole tijdelijk niet beschikbaar')
   const results = await response.json()
   if (!Array.isArray(results) || !results.length) return null
-  const candidates = results.filter((r:any)=>{
-    const a = r?.address || {}
-    if (String(a.country_code || '').toLowerCase() !== 'be') return false
-    if (expectedPc && String(a.postcode || '').trim() && String(a.postcode).trim() !== expectedPc) return false
-    if (expectedCity) {
-      const place = candidatePlace(a)
-      if (place && !place.includes(expectedCity) && !expectedCity.includes(place)) return false
-    }
-    return true
-  })
+  const candidates = results.filter((r:any) => isOostendeAddress(r?.address))
+  if (!candidates.length) return {outsideArea:true as const}
   const first = candidates[0] || null
   if (!first?.lat || !first?.lon) return null
   const lat=Number(first.lat), lon=Number(first.lon); if(!Number.isFinite(lat)||!Number.isFinite(lon)) return null
-  return {lat,lon,displayName:clean(first.display_name,300),normalizedStreet}
+  return {outsideArea:false as const,lat,lon,displayName:clean(first.display_name,300),normalizedStreet}
 }
 async function drivingDistanceKm(lat:number, lon:number) {
   const coords = `${RESTAURANT_LON},${RESTAURANT_LAT};${lon},${lat}`
@@ -103,8 +101,8 @@ async function drivingDistanceKm(lat:number, lon:number) {
   url.searchParams.set('overview','false'); url.searchParams.set('steps','false'); url.searchParams.set('alternatives','false')
   const response = await fetch(url,{headers:{'Accept':'application/json','User-Agent':'GrillTimeOostende/1.5 (https://grilltime.be)'}})
   if(!response.ok) throw new Error('Routecontrole tijdelijk niet beschikbaar. Probeer opnieuw.')
-  const data = await response.json(); const meters = Number(data?.routes?.[0]?.distance)
-  if(!Number.isFinite(meters)||meters<=0) throw new Error('We konden geen geldige route naar dit adres berekenen.')
+  const data = await response.json(); const meters = data?.routes?.[0]?.distance
+  if(typeof meters!=='number'||!Number.isFinite(meters)||meters<0) throw new Error('We konden geen geldige route naar dit adres berekenen.')
   return meters/1000
 }
 
@@ -132,6 +130,7 @@ Deno.serve(async (req)=>{
     const orderType=body.orderType==='delivery'?'delivery':'pickup'
     const addressLine=clean(body.address,180)||null, city=clean(body.city,120)||null
     if(orderType==='delivery'&&(!addressLine||!city)) return json(req,{error:'Bezorgadres ontbreekt'},400)
+    if(orderType==='delivery' && (extractPostcode(city!) !== '8400' || !isOostende(expectedPlace(city!)))) return outsideDelivery(req)
 
     const productIds=[...new Set(items.map(i=>clean(i.productId,80)).filter(Boolean))]
     if(!productIds.length) return json(req,{error:'Ongeldig winkelmandje'},400)
@@ -142,7 +141,7 @@ Deno.serve(async (req)=>{
     if(recentError) throw recentError
     if((recentOrders||0)>=6) return json(req,{error:'Te veel recente bestelpogingen. Probeer later opnieuw.'},429)
 
-    const {data:products,error:productError}=await supabase.from('products').select('id,name,price_cents,active').in('id',productIds).eq('active',true)
+    const {data:products,error:productError}=await supabase.from('products').select('id,name,category,price_cents,active').in('id',productIds).eq('active',true)
     if(productError) throw productError
     const productMap=new Map((products||[]).map((p:any)=>[p.id,p]))
     if(productMap.size!==productIds.length) return json(req,{error:'Een product is niet meer beschikbaar'},400)
@@ -159,7 +158,7 @@ Deno.serve(async (req)=>{
     for(const value of values||[]){const arr=valuesByGroup.get((value as any).group_id)||[];arr.push(value);valuesByGroup.set((value as any).group_id,arr)}
     for(const link of links||[]){const x=link as any;const arr=groupsByProduct.get(x.product_id)||[];arr.push(x.group_id);groupsByProduct.set(x.product_id,arr)}
 
-    const checkedItems:any[]=[]; let subtotalCents=0
+    const checkedItems:any[]=[]; let subtotalCents=0; let foodSubtotalCents=0
     for(const raw of items){
       const product=productMap.get(clean(raw.productId,80)) as any; if(!product) return json(req,{error:'Ongeldig product'},400)
       const qty=Number(raw.qty); if(!Number.isInteger(qty)||qty<1||qty>20) return json(req,{error:'Ongeldig aantal'},400)
@@ -176,6 +175,7 @@ Deno.serve(async (req)=>{
         for(const label of chosen){const value=allowedByLabel.get(label) as any;if(!value)return json(req,{error:`Ongeldige optie: ${label}`},400);unitPriceCents+=Number(value.price_delta_cents||0);normalized[groupId].push(label);details.push(`${group.display_prefix||''}${label}`)}
       }
       const lineTotalCents=unitPriceCents*qty; subtotalCents+=lineTotalCents
+      if(product.category !== 'Drinks') foodSubtotalCents+=lineTotalCents
       if(subtotalCents>200_000) return json(req,{error:'Bestelbedrag is te hoog'},400)
       checkedItems.push({productId:product.id,name:product.name,qty,unitPriceCents,lineTotalCents,selectedOptions:normalized,details,itemNote})
     }
@@ -190,12 +190,12 @@ Deno.serve(async (req)=>{
 
     let deliveryFeeCents=0; let deliveryDistanceKm:number|null=null
     if(orderType==='delivery'){
-      if(subtotalCents<DELIVERY_MIN_CENTS) return json(req,{error:'Minimum bestelling voor bezorging is €15,00'},400)
+      if(foodSubtotalCents<DELIVERY_MIN_CENTS) return json(req,{error:'Minimum bestelling aan eten is €15,00, exclusief losse dranken en bezorgkosten.'},400)
       const geo=await geocodeDeliveryAddress(addressLine!,city!); if(!geo) return json(req,{error:'We konden dit adres niet betrouwbaar koppelen aan de opgegeven postcode/gemeente. Controleer de straatnaam, huisnummer, postcode en gemeente.'},400)
+      if(geo.outsideArea) return outsideDelivery(req)
       deliveryDistanceKm=await drivingDistanceKm(geo.lat,geo.lon)
-      if(deliveryDistanceKm>MAX_DISTANCE_KM) return json(req,{error:`Dit adres ligt buiten ons bezorggebied van ${MAX_DISTANCE_KM} km rijafstand.`},400)
-      if(subtotalCents>=FREE_DELIVERY_CENTS) deliveryFeeCents=0
-      else deliveryFeeCents=deliveryDistanceKm<=INNER_DISTANCE_KM?INNER_FEE_CENTS:OUTER_FEE_CENTS
+      if(deliveryDistanceKm>MAX_DISTANCE_KM) return outsideDelivery(req)
+      deliveryFeeCents=deliveryDistanceKm<=INNER_DISTANCE_KM?INNER_FEE_CENTS:OUTER_FEE_CENTS
     }
     const totalCents=subtotalCents-discountCents+deliveryFeeCents
 

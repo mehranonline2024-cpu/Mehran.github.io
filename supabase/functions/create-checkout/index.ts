@@ -51,7 +51,7 @@ function outsideDelivery(req: Request) {
 function cors(req: Request) {
   const origin = req.headers.get('origin') || ''
   const allowOrigin = allowedOrigins.has(origin) ? origin : 'https://grilltime.be'
-  return {'Access-Control-Allow-Origin':allowOrigin,'Vary':'Origin','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type','Access-Control-Allow-Methods':'POST, OPTIONS','Cache-Control':'no-store'}
+  return {'Access-Control-Allow-Origin':allowOrigin,'Vary':'Origin','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Cache-Control':'no-store'}
 }
 function json(req: Request, body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...cors(req), 'Content-Type':'application/json; charset=utf-8' } }) }
 function getAdminClient() {
@@ -106,11 +106,26 @@ async function drivingDistanceKm(lat:number, lon:number) {
   return meters/1000
 }
 
+async function readDeliveryPaused(supabase: ReturnType<typeof getAdminClient>) {
+  const {data,error}=await supabase.from('store_settings').select('delivery_paused').eq('id','main').single()
+  if(error||typeof data?.delivery_paused!=='boolean')throw new Error('Bezorgstatus tijdelijk niet beschikbaar. Probeer opnieuw of kies afhalen.')
+  return data.delivery_paused
+}
+function pausedDelivery(req: Request) {
+  return json(req,{error:'Bezorgen is tijdelijk gepauzeerd wegens drukte. Je kunt je bestelling wel afhalen.',code:'delivery_paused',pickupAvailable:true},409)
+}
+
 Deno.serve(async (req)=>{
   if(req.method==='OPTIONS') {
     const origin=req.headers.get('origin')||''
     if(origin&&!allowedOrigins.has(origin)) return new Response('Forbidden origin',{status:403,headers:cors(req)})
     return new Response('ok',{headers:cors(req)})
+  }
+  if(req.method==='GET'){
+    const origin=req.headers.get('origin')||''
+    if(origin&&!allowedOrigins.has(origin))return json(req,{error:'Origin not allowed'},403)
+    try{return json(req,{deliveryPaused:await readDeliveryPaused(getAdminClient())})}
+    catch(_){return json(req,{error:'Bezorgstatus tijdelijk niet beschikbaar'},503)}
   }
   if(req.method!=='POST') return json(req,{error:'Method not allowed'},405)
   const origin=req.headers.get('origin')||''
@@ -135,6 +150,7 @@ Deno.serve(async (req)=>{
     const productIds=[...new Set(items.map(i=>clean(i.productId,80)).filter(Boolean))]
     if(!productIds.length) return json(req,{error:'Ongeldig winkelmandje'},400)
     const supabase=getAdminClient()
+    if(orderType==='delivery' && await readDeliveryPaused(supabase))return pausedDelivery(req)
 
     const tenMinutesAgo=new Date(Date.now()-10*60*1000).toISOString()
     const {count:recentOrders,error:recentError}=await supabase.from('orders').select('id',{count:'exact',head:true}).eq('customer_phone',customer.phone).gte('created_at',tenMinutesAgo)
@@ -198,6 +214,9 @@ Deno.serve(async (req)=>{
       deliveryFeeCents=deliveryDistanceKm<=INNER_DISTANCE_KM?INNER_FEE_CENTS:OUTER_FEE_CENTS
     }
     const totalCents=subtotalCents-discountCents+deliveryFeeCents
+
+    // Recheck after address/route lookups, before creating a customer or order.
+    if(orderType==='delivery' && await readDeliveryPaused(supabase))return pausedDelivery(req)
 
     let customerId:string; const existingCustomer=(matchingCustomers||[])[0] as any
     if(existingCustomer?.id){const {data:updated,error}=await supabase.from('customers').update({name:customer.name,phone:customer.phone,email:customer.email,phone_normalized:phoneNormalized}).eq('id',existingCustomer.id).select('id').single();if(error)throw error;customerId=updated.id}

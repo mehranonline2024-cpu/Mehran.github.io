@@ -11,8 +11,17 @@ const serverCode = stripTypeScriptTypes(source.replace(/^import .*\n/gm, ''));
 const html = readFileSync(new URL('../order/index.html', import.meta.url), 'utf8');
 const browserCode = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(m => m[1]).join('\n');
 const outsideMessage = 'Helaas leveren we momenteel alleen binnen 4 km in Oostende. Je kunt je bestelling wel bij Grill Time afhalen.';
+function brusselsTime(dayOffset,hour,minute){
+  const f=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Brussels',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+  const parts=d=>Object.fromEntries(f.formatToParts(d).map(x=>[x.type,x.value]));
+  const base=parts(new Date(Date.now()+dayOffset*86400000));
+  const guess=Date.UTC(Number(base.year),Number(base.month)-1,Number(base.day),hour,minute);
+  const local=parts(new Date(guess));
+  const offset=Date.UTC(Number(local.year),Number(local.month)-1,Number(local.day),Number(local.hour),Number(local.minute))-guess;
+  return new Date(guess-offset);
+}
 
-async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oostende', place = 'Oostende', postcode = '8400', country = 'be', type = 'delivery', payment = 'cash', firstOrder = false, routeDown = false, noGeocode = false, address = 'Example street 1' } = {}) {
+async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oostende', place = 'Oostende', postcode = '8400', country = 'be', type = 'delivery', payment = 'cash', firstOrder = false, routeDown = false, noGeocode = false, address = 'Example street 1', requestedAt, requestedWindowEnd } = {}) {
   const writes = [], routes = [], sessions = [], coupons = [], geocodeQueries = [];
   const products = [{id:'food', name:'Meal', category:'Pizza', price_cents:food, active:true}, {id:'drink', name:'Drink', category:'Drinks', price_cents:drink, active:true}];
   const items = [{productId:'food', qty:1}, ...(drink ? [{productId:'drink', qty:1}] : [])];
@@ -32,7 +41,7 @@ async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oo
           return {data:{...this.value, id:'local-id', order_number:123}, error:null};
         }
         if (this.table === 'orders') return {count:0, error:null};
-        if (this.table === 'store_settings') return {data:{delivery_paused:false}, error:null};
+        if (this.table === 'store_settings') return {data:{timezone:'Europe/Brussels',opens_at:'12:00:00',closes_at:'23:00:00',preorder_days:7,preparation_lead_minutes:30,delivery_estimate_min:25,delivery_estimate_max:45,delivery_paused:false}, error:null};
         if (this.table === 'products') {
           assert.ok(this.columns.split(',').includes('category'));
           return {data:products.filter(p => this.filters.id.includes(p.id)), error:null};
@@ -60,9 +69,35 @@ async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oo
     }
   });
   vm.runInContext(serverCode, context);
-  const response = await handler(new Request('https://checkout.example.test', {method:'POST', headers:{origin:'https://grilltime.be', 'content-type':'application/json'}, body:JSON.stringify({customer:{name:'Local test', phone:'0400000000'}, orderType:type, paymentMethod:payment, address:type === 'delivery' ? address : null, city:type === 'delivery' ? city : null, items})}));
+  const response = await handler(new Request('https://checkout.example.test', {method:'POST', headers:{origin:'https://grilltime.be', 'content-type':'application/json'}, body:JSON.stringify({customer:{name:'Local test', phone:'0400000000'}, orderType:type, paymentMethod:payment, address:type === 'delivery' ? address : null, city:type === 'delivery' ? city : null, requestedAt:requestedAt===undefined?brusselsTime(2,12,0).toISOString():requestedAt, requestedWindowEnd:requestedWindowEnd===undefined?(type==='delivery'?brusselsTime(2,12,15).toISOString():null):requestedWindowEnd, items})}));
   return {status:response.status, body:await response.json(), writes, routes, sessions, coupons, geocodeQueries};
 }
+
+test('A 12:00 slot requires the agreed 30-minute preparation lead', async () => {
+  const validatorContext=vm.createContext({Date,Intl,Stripe:class{},createClient(){},Deno:{env:{get:()=>''},serve(){}}});
+  vm.runInContext(serverCode,validatorContext);
+  const slot=brusselsTime(1,12,0),end=brusselsTime(1,12,15),cutoff=brusselsTime(1,11,30);
+  const settings={timezone:'Europe/Brussels',opens_at:'12:00:00',closes_at:'23:00:00',preorder_days:7,preparation_lead_minutes:30};
+  const request={orderType:'delivery',requestedAt:slot.toISOString(),requestedWindowEnd:end.toISOString()};
+  const onCutoff=validatorContext.validateRequestedSlot(request,settings,cutoff);
+  assert.equal(onCutoff.requestedAt,slot.toISOString());
+  assert.equal(onCutoff.requestedTime,`${new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Brussels',year:'numeric',month:'2-digit',day:'2-digit'}).format(slot)} 12:00–12:15`);
+  assert.match(validatorContext.validateRequestedSlot(request,settings,new Date(cutoff.getTime()+1000)).error,/minstens 30 minuten later/i);
+});
+
+test('Checkout validates chosen times, delivery windows, and opening hours', async () => {
+  const valid=await checkout();
+  assert.equal(valid.status,200,JSON.stringify(valid.body));
+  const missing=await checkout({requestedAt:''});
+  assert.equal(missing.status,400);
+  assert.match(missing.body.error,/moment/i);
+  const invalidWindow=await checkout({requestedWindowEnd:brusselsTime(2,12,30).toISOString()});
+  assert.equal(invalidWindow.status,400);
+  assert.match(invalidWindow.body.error,/15 minuten/i);
+  const outsideHours=await checkout({type:'pickup',requestedAt:brusselsTime(2,8,0).toISOString()});
+  assert.equal(outsideHours.status,400);
+  assert.match(outsideHours.body.error,/12:00 en 23:00/i);
+});
 
 test('Driving-distance boundaries select the correct fee without rounding first', async () => {
   for (const [meters, fee] of [[0,299], [1,299], [2500,299], [2500.1,399], [4000,399]]) {
@@ -159,8 +194,8 @@ test('Online payment receives the same fee and totals as the database', async ()
 test('Customer form enforces food minimum and preserves cart when offering pickup', () => {
   const elements = new Map();
   const element = id => {if (!elements.has(id)) elements.set(id, {innerHTML:'', textContent:'', value:'', classList:{toggle() {}, add() {}, remove() {}}, scrollIntoView() {}}); return elements.get(id);};
-  const context = vm.createContext({console, URLSearchParams, Intl,
-    localStorage:{getItem:() => null}, document:{getElementById:element, addEventListener() {}}, location:{search:''}, setInterval:() => 0,
+  const context = vm.createContext({console, URLSearchParams, Intl, gtIsEnglish:()=>false, gtText:nl=>nl, window:{gtIsEnglish:()=>false,addEventListener() {}},
+    localStorage:{getItem:() => null, setItem() {}}, document:{getElementById:element, addEventListener() {}}, location:{search:''}, setInterval:() => 0,
     fetch:() => new Promise(() => {}), setTimeout:() => 0,
     FormData:class { get(key) {return {name:'Local test', phone:'0400000000'}[key] || null;} }
   });
@@ -178,4 +213,8 @@ test('Customer form enforces food minimum and preserves cart when offering picku
   assert.equal(vm.runInContext('checkoutDraft.name', context), 'Local test');
   assert.match(element('checkoutSheet').innerHTML, /Geen minimum bestelbedrag en geen bezorgkosten/);
   assert.doesNotMatch(html, /FREE_DELIVERY|gratis vanaf €50|GRATIS<\/strong> vanaf €50/i);
+  assert.match(html,/name=\"requestedSlot\"/);
+  assert.match(html,/deliveryEstimateMin/);
+  assert.match(html,/languageToggle/);
+  assert.match(readFileSync(new URL('../order/i18n.js',import.meta.url),'utf8'),/Estimated delivery time: 25–45 minutes/);
 });

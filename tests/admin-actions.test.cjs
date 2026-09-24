@@ -41,9 +41,15 @@ async function run(action,options={}){
  assert.equal((await run('reject',{order:{status:'pending_payment',payment_method:'online'}})).status,409);
  const conflict=await run('reject',{order:paid,race:true});assert.equal(conflict.refundCalls,0);assert.equal(conflict.order.status,'accepted');
  const html=fs.readFileSync(__dirname+'/../admin/index.html','utf8');for(const s of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))new vm.Script(s[1]);
+ const filterCode=html.slice(html.indexOf('function filterList()'),html.indexOf('function orderHtml('));const filters=vm.createContext({});vm.runInContext(filterCode,filters);
+ assert.equal(filters.filterList().at(-1).id,'history');assert.equal(filters.filterList().some(f=>f.id==='all'||f.id==='completed'),false);
+ const rows=[{status:'new'},{status:'preparing'},{status:'completed'},{status:'rejected'},{status:'cancelled'}];
+ assert.deepEqual(Array.from(filters.ordersForFilter('active',rows),x=>x.status),['new','preparing']);
+ assert.deepEqual(Array.from(filters.ordersForFilter('history',rows),x=>x.status),['completed','rejected','cancelled']);
  const code=html.slice(html.indexOf('const busyOrderIds='),html.indexOf('async function runOrderAction('));const c=vm.createContext({});vm.runInContext(code,c);
  assert.match(c.orderActionHtml({id,status:'new',payment_method:'cash',payment_status:'unpaid'}),/Accepteren/);
  assert.doesNotMatch(c.orderActionHtml({id,status:'new',payment_method:'online',payment_status:'unpaid'}),/onclick/);
  assert.match(c.orderActionHtml({id,status:'rejected',payment_method:'online',payment_status:'paid'}),/Terugbetaling controleren/);
- console.log('PASS: admin actions, MFA, payment guards, cash refusal, refund success/pending/failure/retry, concurrent transitions and dashboard rendering. Stripe and database calls mocked.');
+ assert.match(html,/if\(actionSucceeded\)currentFilter='active'/);
+ console.log('PASS: admin actions, MFA, payment guards, cash refusal, refund success/pending/failure/retry, concurrent transitions, active/history separation and dashboard rendering. Stripe and database calls mocked.');
 })().catch(e=>{console.error(e);process.exitCode=1});

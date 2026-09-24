@@ -12,8 +12,8 @@ const html = readFileSync(new URL('../order/index.html', import.meta.url), 'utf8
 const browserCode = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(m => m[1]).join('\n');
 const outsideMessage = 'Helaas leveren we momenteel alleen binnen 4 km in Oostende. Je kunt je bestelling wel bij Grill Time afhalen.';
 
-async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oostende', place = 'Oostende', postcode = '8400', country = 'be', type = 'delivery', payment = 'cash', firstOrder = false, routeDown = false, noGeocode = false } = {}) {
-  const writes = [], routes = [], sessions = [], coupons = [];
+async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oostende', place = 'Oostende', postcode = '8400', country = 'be', type = 'delivery', payment = 'cash', firstOrder = false, routeDown = false, noGeocode = false, address = 'Example street 1' } = {}) {
+  const writes = [], routes = [], sessions = [], coupons = [], geocodeQueries = [];
   const products = [{id:'food', name:'Meal', category:'Pizza', price_cents:food, active:true}, {id:'drink', name:'Drink', category:'Drinks', price_cents:drink, active:true}];
   const items = [{productId:'food', qty:1}, ...(drink ? [{productId:'drink', qty:1}] : [])];
   class Query {
@@ -32,6 +32,7 @@ async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oo
           return {data:{...this.value, id:'local-id', order_number:123}, error:null};
         }
         if (this.table === 'orders') return {count:0, error:null};
+        if (this.table === 'store_settings') return {data:{delivery_paused:false}, error:null};
         if (this.table === 'products') {
           assert.ok(this.columns.split(',').includes('category'));
           return {data:products.filter(p => this.filters.id.includes(p.id)), error:null};
@@ -51,7 +52,7 @@ async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oo
     console:{error() {}}, Stripe:StripeMock, createClient:() => ({from:table => new Query(table)}),
     Deno:{env:{get:key => ({STRIPE_SECRET_KEY:'local-mock-key', SUPABASE_URL:'https://database.example.test', SUPABASE_SERVICE_ROLE_KEY:'local-mock-key'}[key])}, serve:fn => {handler = fn;}},
     fetch:async url => {
-      if (url.hostname === 'nominatim.openstreetmap.org') return Response.json(noGeocode ? [] : [{lat:'51.22', lon:'2.92', address:{country_code:country, postcode, city:place}}]);
+      if (url.hostname === 'nominatim.openstreetmap.org') {geocodeQueries.push(url.searchParams.get('q')); return Response.json(noGeocode ? [] : [{lat:'51.22', lon:'2.92', address:{country_code:country, postcode, city:place}}]);}
       assert.equal(url.hostname, 'router.project-osrm.org');
       assert.match(url.pathname, /^\/route\/v1\/driving\//);
       routes.push(String(url));
@@ -59,8 +60,8 @@ async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oo
     }
   });
   vm.runInContext(serverCode, context);
-  const response = await handler(new Request('https://checkout.example.test', {method:'POST', headers:{origin:'https://grilltime.be', 'content-type':'application/json'}, body:JSON.stringify({customer:{name:'Local test', phone:'0400000000'}, orderType:type, paymentMethod:payment, address:type === 'delivery' ? 'Example street 1' : null, city:type === 'delivery' ? city : null, items})}));
-  return {status:response.status, body:await response.json(), writes, routes, sessions, coupons};
+  const response = await handler(new Request('https://checkout.example.test', {method:'POST', headers:{origin:'https://grilltime.be', 'content-type':'application/json'}, body:JSON.stringify({customer:{name:'Local test', phone:'0400000000'}, orderType:type, paymentMethod:payment, address:type === 'delivery' ? address : null, city:type === 'delivery' ? city : null, items})}));
+  return {status:response.status, body:await response.json(), writes, routes, sessions, coupons, geocodeQueries};
 }
 
 test('Driving-distance boundaries select the correct fee without rounding first', async () => {
@@ -74,6 +75,15 @@ test('Driving-distance boundaries select the correct fee without rounding first'
     assert.equal(order.delivery_fee_cents, fee);
     assert.equal(order.delivery_distance_method, 'driving');
   }
+});
+
+test('Common misspelling of Vrijheidstraat is corrected before address geocoding', async () => {
+  const result = await checkout({address:'Vrijheidsstraat 31', meters:2400});
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.geocodeQueries[0], 'Vrijheidstraat 31, 8400 Oostende, Belgium');
+  assert.equal(result.body.deliveryDistanceKm, 2.4);
+  assert.equal(result.body.deliveryFeeCents, 299);
+  assert.equal(result.body.totalCents, 1799);
 });
 
 test('Orders of €50 and €100 still pay delivery fees', async () => {
@@ -150,12 +160,12 @@ test('Customer form enforces food minimum and preserves cart when offering picku
   const elements = new Map();
   const element = id => {if (!elements.has(id)) elements.set(id, {innerHTML:'', textContent:'', value:'', classList:{toggle() {}, add() {}, remove() {}}, scrollIntoView() {}}); return elements.get(id);};
   const context = vm.createContext({console, URLSearchParams, Intl,
-    localStorage:{getItem:() => null}, document:{getElementById:element}, location:{search:''},
+    localStorage:{getItem:() => null}, document:{getElementById:element, addEventListener() {}}, location:{search:''}, setInterval:() => 0,
     fetch:() => new Promise(() => {}), setTimeout:() => 0,
     FormData:class { get(key) {return {name:'Local test', phone:'0400000000'}[key] || null;} }
   });
   vm.runInContext(browserCode, context);
-  vm.runInContext("products=[{id:'food',category:'Pizza'},{id:'drink',category:'Drinks'}];cart=[{productId:'food',name:'Meal',qty:1,unitPrice:12,selections:[]},{productId:'drink',name:'Drink',qty:1,unitPrice:3,selections:[]}];orderType='delivery';renderCheckout()", context);
+  vm.runInContext("deliveryPaused=false;products=[{id:'food',category:'Pizza'},{id:'drink',category:'Drinks'}];cart=[{productId:'food',name:'Meal',qty:1,unitPrice:12,selections:[]},{productId:'drink',name:'Drink',qty:1,unitPrice:3,selections:[]}];orderType='delivery';renderCheckout()", context);
   assert.equal(vm.runInContext('cartFoodTotal()', context), 12);
   assert.match(element('checkoutSheet').innerHTML, /type="submit" disabled/);
   vm.runInContext("cart[0].unitPrice=15;renderCheckout()", context);

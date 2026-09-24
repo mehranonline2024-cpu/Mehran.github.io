@@ -28,6 +28,8 @@ function normalizeText(value: unknown) {
 function normalizeDeliveryStreet(value: string) {
   let s = clean(value, 180)
   s = s.replace(/^oude\s*molen\s*straat\b/i, 'Oude Molenstraat')
+  // In Oostende, "Vrijheidsstraat" is commonly entered for the official "Vrijheidstraat".
+  s = s.replace(/^vrijheidsstraat\b/i, 'Vrijheidstraat')
   return s
 }
 function extractPostcode(value: string) {

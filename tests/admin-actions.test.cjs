@@ -42,10 +42,11 @@ async function run(action,options={}){
  const conflict=await run('reject',{order:paid,race:true});assert.equal(conflict.refundCalls,0);assert.equal(conflict.order.status,'accepted');
  const html=fs.readFileSync(__dirname+'/../admin/index.html','utf8');for(const s of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))new vm.Script(s[1]);
  const filterCode=html.slice(html.indexOf('function filterList()'),html.indexOf('function orderHtml('));const filters=vm.createContext({});vm.runInContext(filterCode,filters);
- assert.equal(filters.filterList().at(-1).id,'history');assert.equal(filters.filterList().some(f=>f.id==='all'||f.id==='completed'),false);
- const rows=[{status:'new'},{status:'preparing'},{status:'completed'},{status:'rejected'},{status:'cancelled'}];
- assert.deepEqual(Array.from(filters.ordersForFilter('active',rows),x=>x.status),['new','preparing']);
- assert.deepEqual(Array.from(filters.ordersForFilter('history',rows),x=>x.status),['completed','rejected','cancelled']);
+ assert.equal(filters.filterList()[0].id,'active');assert.match(filters.filterList()[0].label,/Home/);assert.equal(filters.filterList().at(-1).id,'history');assert.equal(filters.filterList().some(f=>f.id==='all'||f.id==='completed'||f.id==='unpaid'),false);
+ const rows=[{status:'new',payment_method:'cash',payment_status:'unpaid'},{status:'new',payment_method:'online',payment_status:'unpaid'},{status:'preparing',payment_method:'online',payment_status:'unpaid'},{status:'pending_payment',payment_method:'online',payment_status:'unpaid'},{status:'preparing',payment_method:'online',payment_status:'paid'},{status:'completed',payment_method:'online',payment_status:'paid'},{status:'rejected',payment_method:'cash',payment_status:'unpaid'},{status:'cancelled',payment_method:'online',payment_status:'unpaid'},{status:'completed',payment_method:'online',payment_status:'failed'}];
+ assert.deepEqual(Array.from(filters.ordersForFilter('active',rows),x=>x.status+':'+x.payment_method),['new:cash','preparing:online']);
+ assert.deepEqual(Array.from(filters.ordersForFilter('history',rows),x=>x.status+':'+x.payment_method),['completed:online','rejected:cash']);
+ for(const filter of filters.filterList().map(f=>f.id))assert.equal(filters.ordersForFilter(filter,rows).some(filters.isOnlineUnpaid),false,`online unpaid order leaked into ${filter}`);
  const code=html.slice(html.indexOf('const busyOrderIds='),html.indexOf('async function runOrderAction('));const c=vm.createContext({});vm.runInContext(code,c);
  assert.match(c.orderActionHtml({id,status:'new',payment_method:'cash',payment_status:'unpaid'}),/Accepteren/);
  assert.doesNotMatch(c.orderActionHtml({id,status:'new',payment_method:'online',payment_status:'unpaid'}),/onclick/);

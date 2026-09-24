@@ -113,6 +113,41 @@ async function readDeliveryPaused(supabase: ReturnType<typeof getAdminClient>) {
   if(error||typeof data?.delivery_paused!=='boolean')throw new Error('Bezorgstatus tijdelijk niet beschikbaar. Probeer opnieuw of kies afhalen.')
   return data.delivery_paused
 }
+const STORE_SETTINGS_COLUMNS='timezone,opens_at,closes_at,preorder_days,preparation_lead_minutes,delivery_estimate_min,delivery_estimate_max,delivery_paused'
+function zonedParts(date:Date,timezone:string) {
+  return Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(date).map(x=>[x.type,x.value])) as Record<string,string>
+}
+function timeMinutes(value:string) {
+  const m=String(value||'').match(/^(\d{2}):(\d{2})/)
+  if(!m)return NaN
+  const h=Number(m[1]),minute=Number(m[2])
+  return h<=23&&minute<=59?h*60+minute:NaN
+}
+function validateRequestedSlot(body:any,settings:any,now=new Date()) {
+  const requestedAt=new Date(String(body.requestedAt||''))
+  if(!Number.isFinite(requestedAt.getTime()))return {error:'Kies een geldig bestel- of bezorgmoment.'}
+  const timezone=String(settings?.timezone||'Europe/Brussels')
+  const opens=timeMinutes(settings?.opens_at),closes=timeMinutes(settings?.closes_at)
+  const lead=Number(settings?.preparation_lead_minutes)
+  const preorderDays=Number(settings?.preorder_days)
+  if(!Number.isFinite(opens)||!Number.isFinite(closes)||closes<=opens||!Number.isFinite(lead)||lead<0||!Number.isFinite(preorderDays)||preorderDays<0)return {error:'Tijdinstellingen zijn tijdelijk niet beschikbaar. Probeer opnieuw.'}
+  if(requestedAt.getTime()<now.getTime()+lead*60_000)return {error:`Kies een tijdstip minstens ${lead} minuten later.`}
+  const requested=zonedParts(requestedAt,timezone),today=zonedParts(now,timezone)
+  const dayNumber=(p:Record<string,string>)=>Date.UTC(Number(p.year),Number(p.month)-1,Number(p.day))/86_400_000
+  const dayOffset=dayNumber(requested)-dayNumber(today)
+  if(dayOffset<0||dayOffset>preorderDays)return {error:`Je kunt maximaal ${preorderDays} dagen vooruitbestellen.`}
+  const minute=Number(requested.hour)*60+Number(requested.minute)
+  if(minute%15!==0||minute<opens||minute>closes)return {error:'Kies een tijdstip tussen 12:00 en 23:00 in stappen van 15 minuten.'}
+  let requestedWindowEnd:string|null=null
+  if(body.orderType==='delivery'){
+    const suppliedEnd=new Date(String(body.requestedWindowEnd||''))
+    const expectedEnd=requestedAt.getTime()+15*60_000
+    if(!Number.isFinite(suppliedEnd.getTime())||Math.abs(suppliedEnd.getTime()-expectedEnd)>1_000||minute+15>closes)return {error:'Kies een geldig bezorgvenster van 15 minuten.'}
+    requestedWindowEnd=suppliedEnd.toISOString()
+  }else if(body.requestedWindowEnd)return {error:'Ongeldige afhaaltijd.'}
+  const requestedTime=body.orderType==='delivery'?`${requested.year}-${requested.month}-${requested.day} ${requested.hour}:${requested.minute}–${zonedParts(new Date(requestedAt.getTime()+15*60_000),timezone).hour}:${zonedParts(new Date(requestedAt.getTime()+15*60_000),timezone).minute}`:`${requested.year}-${requested.month}-${requested.day} ${requested.hour}:${requested.minute}`
+  return {requestedAt:requestedAt.toISOString(),requestedWindowEnd,requestedTime}
+}
 function pausedDelivery(req: Request) {
   return json(req,{error:'Bezorgen is tijdelijk gepauzeerd wegens drukte. Je kunt je bestelling wel afhalen.',code:'delivery_paused',pickupAvailable:true},409)
 }
@@ -126,7 +161,11 @@ Deno.serve(async (req)=>{
   if(req.method==='GET'){
     const origin=req.headers.get('origin')||''
     if(origin&&!allowedOrigins.has(origin))return json(req,{error:'Origin not allowed'},403)
-    try{return json(req,{deliveryPaused:await readDeliveryPaused(getAdminClient())})}
+    try{
+      const {data,error}=await getAdminClient().from('store_settings').select(STORE_SETTINGS_COLUMNS).eq('id','main').single()
+      if(error||typeof data?.delivery_paused!=='boolean')throw new Error('Settings unavailable')
+      return json(req,{deliveryPaused:data.delivery_paused,settings:{timezone:data.timezone,opensAt:String(data.opens_at).slice(0,5),closesAt:String(data.closes_at).slice(0,5),preorderDays:data.preorder_days,preparationLeadMinutes:data.preparation_lead_minutes,deliveryEstimateMin:data.delivery_estimate_min,deliveryEstimateMax:data.delivery_estimate_max}})
+    }
     catch(_){return json(req,{error:'Bezorgstatus tijdelijk niet beschikbaar'},503)}
   }
   if(req.method!=='POST') return json(req,{error:'Method not allowed'},405)
@@ -152,7 +191,11 @@ Deno.serve(async (req)=>{
     const productIds=[...new Set(items.map(i=>clean(i.productId,80)).filter(Boolean))]
     if(!productIds.length) return json(req,{error:'Ongeldig winkelmandje'},400)
     const supabase=getAdminClient()
-    if(orderType==='delivery' && await readDeliveryPaused(supabase))return pausedDelivery(req)
+    const {data:storeSettings,error:settingsError}=await supabase.from('store_settings').select(STORE_SETTINGS_COLUMNS).eq('id','main').single()
+    if(settingsError||!storeSettings)return json(req,{error:'Tijdinstellingen zijn tijdelijk niet beschikbaar. Probeer opnieuw.'},503)
+    if(orderType==='delivery' && storeSettings.delivery_paused)return pausedDelivery(req)
+    const slot=validateRequestedSlot({...body,orderType},storeSettings)
+    if('error' in slot)return json(req,{error:slot.error},400)
 
     const tenMinutesAgo=new Date(Date.now()-10*60*1000).toISOString()
     const {count:recentOrders,error:recentError}=await supabase.from('orders').select('id',{count:'exact',head:true}).eq('customer_phone',customer.phone).gte('created_at',tenMinutesAgo)
@@ -219,15 +262,16 @@ Deno.serve(async (req)=>{
 
     // Recheck after address/route lookups, before creating a customer or order.
     if(orderType==='delivery' && await readDeliveryPaused(supabase))return pausedDelivery(req)
+    const finalSlot=validateRequestedSlot({...body,orderType},storeSettings)
+    if('error' in finalSlot)return json(req,{error:finalSlot.error},400)
 
     let customerId:string; const existingCustomer=(matchingCustomers||[])[0] as any
     if(existingCustomer?.id){const {data:updated,error}=await supabase.from('customers').update({name:customer.name,phone:customer.phone,email:customer.email,phone_normalized:phoneNormalized}).eq('id',existingCustomer.id).select('id').single();if(error)throw error;customerId=updated.id}
     else {const {data:inserted,error}=await supabase.from('customers').insert({name:customer.name,phone:customer.phone,email:customer.email,phone_normalized:phoneNormalized}).select('id').single();if(error)throw error;customerId=inserted.id}
 
-    const requestedTime=clean(body.requestedTime??body.time,80)||'Zo snel mogelijk'
     const {data:order,error:orderError}=await supabase.from('orders').insert({
       customer_id:customerId,customer_name:customer.name,customer_phone:customer.phone,customer_email:customer.email,
-      order_type:orderType,requested_time:requestedTime,address_line:addressLine,city,notes:clean(body.notes,500)||null,
+      order_type:orderType,requested_time:finalSlot.requestedTime,requested_at:finalSlot.requestedAt,requested_window_end:finalSlot.requestedWindowEnd,address_line:addressLine,city,notes:clean(body.notes,500)||null,
       status:paymentMethod==='cash'?'new':'pending_payment',payment_status:'unpaid',payment_method:paymentMethod,
       subtotal_cents:subtotalCents,discount_cents:discountCents,discount_code:discountCode,
       delivery_fee_cents:deliveryFeeCents,delivery_distance_km:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),delivery_distance_method:orderType==='delivery'?'driving':null,
@@ -239,7 +283,7 @@ Deno.serve(async (req)=>{
     if(itemError) throw itemError
 
     if(paymentMethod==='cash'){
-      return json(req,{ok:true,cashOrder:true,orderNumber:order.order_number,subtotalCents,discountCents,discountCode,welcomeDiscountApplied:discountCents>0,deliveryFeeCents,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),totalCents:order.total_cents})
+      return json(req,{ok:true,cashOrder:true,orderNumber:order.order_number,requestedTime:finalSlot.requestedTime,subtotalCents,discountCents,discountCode,welcomeDiscountApplied:discountCents>0,deliveryFeeCents,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),totalCents:order.total_cents})
     }
 
     const siteUrl=(Deno.env.get('SITE_URL')||'https://grilltime.be').replace(/\/$/,'')

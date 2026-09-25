@@ -18,11 +18,12 @@
 <body>
 <div id="loginView" class="login hidden"><h1>Grill Time Dashboard</h1><p>Alleen voor restaurantbeheer.</p><form id="loginForm"><div class="field"><label>E-mail</label><input id="email" type="email" required autocomplete="username"></div><div class="field"><label>Wachtwoord</label><input id="password" type="password" required autocomplete="current-password"></div><button class="btn gold" style="width:100%;padding:13px" type="submit">Inloggen</button></form><div id="loginMsg"></div></div>
 <div id="mfaView" class="mfa-box hidden"><div id="mfaContent"></div></div>
-<div id="dashboardView" class="wrap hidden"><div class="head"><div><h1>Grill Time · Dashboard</h1><small id="subtitle">Bestellingen en omzet</small></div><div class="actions"><span class="live"><span class="dot"></span> Live + auto</span><span class="live">🔐 MFA</span><button id="soundBtn" class="btn sound-off" type="button" onclick="toggleSound()">🔔 Geluid aan</button><button class="btn dark" onclick="loadOrders()">↻ Vernieuwen</button><button id="logoutBtn" class="btn dark">Uitloggen</button></div></div><section class="msg ok" id="deliveryControls" aria-label="Bezorging beheren"><div class="actions"><strong id="deliveryState" role="status">Bezorgstatus laden…</strong><button id="deliveryPauseBtn" class="btn gold" type="button" onclick="toggleDeliveryPause()" disabled>Leveringen pauzeren</button></div><div style="margin-top:8px;font-size:13px">Afhalen en bestaande bestellingen blijven actief.</div><div id="deliverySettingsError" role="alert"></div></section><div id="stats" class="stats"></div><div id="filters" class="filters"></div><div id="orders"></div></div>
+<div id="dashboardView" class="wrap hidden"><div class="head"><div><h1>Grill Time · Dashboard</h1><small id="subtitle">Bestellingen en omzet</small></div><div class="actions"><span class="live"><span class="dot"></span> Live + auto</span><span class="live">🔐 MFA</span><button id="soundBtn" class="btn sound-off" type="button" onclick="toggleSound()">🔔 Geluid aan</button><button class="btn dark" onclick="loadOrders()">↻ Vernieuwen</button><button id="logoutBtn" class="btn dark">Uitloggen</button></div></div><section class="msg ok" id="deliveryControls" aria-label="Bezorging beheren"><div class="actions"><strong id="deliveryState" role="status">Bezorgstatus laden…</strong><button id="deliveryPauseBtn" class="btn gold" type="button" onclick="toggleDeliveryPause()" disabled>Leveringen pauzeren</button></div><div style="margin-top:8px;font-size:13px">Afhalen en bestaande bestellingen blijven actief.</div><div id="deliverySettingsError" role="alert"></div></section><section class="msg warn" id="printerControls" aria-label="Keukenprinter beheren"><div class="actions"><strong id="printerState" role="status">Printstation uit op deze laptop</strong><button id="printerToggleBtn" class="btn dark" type="button" onclick="togglePrinterStation()">Printstation starten</button><button id="printerTestBtn" class="btn dark" type="button" onclick="printPrinterTest()">Testbon afdrukken</button></div><div style="margin-top:8px;font-size:13px">Keukenprinter: 192.168.1.100:9100. Stel deze printer in Windows in als standaardprinter. Laat dit dashboard open op de laptop; ook bestellingen die je op de tablet accepteert worden dan afgedrukt. Voor afdrukken zonder dialoog moet Chrome met kiosk-printen starten.</div><div id="printerMessage" role="status" style="margin-top:8px"></div><div id="printerFailedBox" class="msg bad hidden"><span id="printerFailedMessage"></span> <button class="btn dark" type="button" onclick="retryFailedPrinterJob()">Bon opnieuw aanbieden</button></div></section><div id="stats" class="stats"></div><div id="filters" class="filters"></div><div id="orders"></div></div>
 <div id="alertToast" class="alert-toast">🔔 Nieuwe bestelling ontvangen</div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script>window.GT_CONFIG={SUPABASE_URL:'https://qpaycwrhohunpfjqmlga.supabase.co',SUPABASE_PUBLISHABLE_KEY:'sb_publishable_lEAgOU350gcdQdI_zYVDAQ_6p7uNeYM',CONNECTED_MODE:true};</script>
+<script src="./printer.js"></script>
 <script>
-const cfg=window.GT_CONFIG||{};const sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_PUBLISHABLE_KEY);const euroCents=n=>new Intl.NumberFormat('nl-BE',{style:'currency',currency:'EUR'}).format((Number(n)||0)/100);const statusLabel={pending_payment:'Wacht betaling',new:'Nieuw',accepted:'Geaccepteerd',on_way:'Onderweg',rejected:'Geweigerd',preparing:'Bezig',ready:'Klaar',completed:'Afgerond',cancelled:'Geannuleerd'};let orders=[],currentFilter='active',realtimeChannel=null,firstOrderLoad=true,knownAlertIds=new Set(),audioCtx=null,soundEnabled=false,pollTimer=null,loadInFlight=false,alarmBuffer=null,alarmRepeatTimer=null,currentMfaFactorId=null;
+const cfg=window.GT_CONFIG||{};const sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_PUBLISHABLE_KEY);const euroCents=n=>new Intl.NumberFormat('nl-BE',{style:'currency',currency:'EUR'}).format((Number(n)||0)/100);const statusLabel={pending_payment:'Wacht betaling',new:'Nieuw',accepted:'Geaccepteerd',on_way:'Onderweg',rejected:'Geweigerd',preparing:'Bezig',ready:'Klaar',completed:'Afgerond',cancelled:'Geannuleerd'};let orders=[],currentFilter='active',realtimeChannel=null,firstOrderLoad=true,knownAlertIds=new Set(),audioCtx=null,soundEnabled=false,pollTimer=null,loadInFlight=false,alarmBuffer=null,alarmRepeatTimer=null,currentMfaFactorId=null,printerStationEnabled=localStorage.getItem('gt-kitchen-printer-enabled')==='true',printerTestPassed=localStorage.getItem('gt-kitchen-printer-test-passed')==='true',printerPollTimer=null,printerPollBusy=false,failedPrinterJob=null;
 function esc(s=''){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}function show(id,yes){document.getElementById(id).classList.toggle('hidden',!yes)}function loginMessage(t){document.getElementById('loginMsg').innerHTML=t?`<div class="msg bad">${esc(t)}</div>`:''}function mfaMessage(t,type='bad'){const e=document.getElementById('mfaMsg');if(e)e.innerHTML=t?`<div class="msg ${type}">${esc(t)}</div>`:''}
 function updateSoundButton(){const b=document.getElementById('soundBtn');b.textContent=soundEnabled?'🔊 Alarm aan · 5 sec pauze':'🔔 Geluid aan';b.classList.toggle('sound-on',soundEnabled);b.classList.toggle('sound-off',!soundEnabled)}
 function buildAlarmBuffer(){if(alarmBuffer)return alarmBuffer;const sr=audioCtx.sampleRate,duration=.42,len=Math.floor(sr*duration),buffer=audioCtx.createBuffer(1,len,sr),data=buffer.getChannelData(0),f=1750;for(let i=0;i<len;i++){const x=i/sr,pos=i/len,env=Math.min(1,pos/.08,(1-pos)/.18),square1=Math.sin(2*Math.PI*f*x)>=0?1:-1,square2=Math.sin(2*Math.PI*(f*2)*x)>=0?1:-1,sine=Math.sin(2*Math.PI*(f*.5)*x);data[i]=Math.max(-1,Math.min(1,(.78*square1+.25*square2+.15*sine)*Math.max(0,env)*1.3))}alarmBuffer=buffer;return buffer}
@@ -35,15 +36,104 @@ async function isRestaurantAdmin(){const {data,error}=await sb.from('restaurant_
 async function start(){updateSoundButton();const {data:{session}}=await sb.auth.getSession();if(session)await afterPasswordLogin();else show('loginView',true)}
 document.getElementById('loginForm').addEventListener('submit',async e=>{e.preventDefault();loginMessage('');const btn=e.submitter;btn.disabled=true;btn.textContent='Controleren…';const {error}=await sb.auth.signInWithPassword({email:document.getElementById('email').value.trim(),password:document.getElementById('password').value});if(error){btn.disabled=false;btn.textContent='Inloggen';return loginMessage('E-mail of wachtwoord is niet correct.')}await afterPasswordLogin();btn.disabled=false;btn.textContent='Inloggen'});
 document.getElementById('logoutBtn').onclick=logoutAll;
-async function logoutAll(){if(realtimeChannel){await sb.removeChannel(realtimeChannel);realtimeChannel=null}if(pollTimer){clearInterval(pollTimer);pollTimer=null}stopAlarmReminder();await sb.auth.signOut();location.reload()}
+async function logoutAll(){if(realtimeChannel){await sb.removeChannel(realtimeChannel);realtimeChannel=null}if(pollTimer){clearInterval(pollTimer);pollTimer=null}stopPrinterStation();stopAlarmReminder();await sb.auth.signOut();location.reload()}
 async function afterPasswordLogin(){show('loginView',false);show('dashboardView',false);show('mfaView',false);const a=await isRestaurantAdmin();if(!a.ok){await sb.auth.signOut();show('loginView',true);loginMessage('Dit account heeft geen restaurant-admin toegang.');return}await requireMfa(a.admin)}
 async function requireMfa(admin){const {data:aal,error:aalError}=await sb.auth.mfa.getAuthenticatorAssuranceLevel();if(aalError){show('mfaView',true);document.getElementById('mfaContent').innerHTML=`<h1>Beveiligingscontrole</h1><div class="msg bad">MFA-status kon niet worden gecontroleerd.</div><button class="btn dark" onclick="logoutAll()">Uitloggen</button>`;return}if(aal?.currentLevel==='aal2'){await enterDashboard(admin);return}const {data:factors,error:fError}=await sb.auth.mfa.listFactors();if(fError){show('mfaView',true);document.getElementById('mfaContent').innerHTML=`<h1>Beveiligingscontrole</h1><div class="msg bad">Authenticator kon niet worden geladen.</div><button class="btn dark" onclick="logoutAll()">Uitloggen</button>`;return}const verified=(factors?.totp||[]).find(f=>f.status==='verified');if(verified){showMfaChallenge(verified.id);return}for(const f of (factors?.totp||[]).filter(x=>x.status!=='verified')){try{await sb.auth.mfa.unenroll({factorId:f.id})}catch(_){}}await beginMfaEnrollment()}
 function showMfaChallenge(factorId){currentMfaFactorId=factorId;show('mfaView',true);document.getElementById('mfaContent').innerHTML=`<h1>Authenticator-code</h1><p>Open je Authenticator-app en vul de actuele 6-cijferige code in.</p><form id="mfaForm"><div class="field"><label>6-cijferige code</label><input id="mfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="123456" required></div><button class="btn gold" style="width:100%;padding:13px" type="submit">Veilig inloggen</button></form><div id="mfaMsg"></div><div class="mfa-actions"><button class="btn dark" onclick="logoutAll()">Uitloggen</button></div>`;document.getElementById('mfaForm').onsubmit=verifyMfaCode;setTimeout(()=>document.getElementById('mfaCode')?.focus(),100)}
 async function beginMfaEnrollment(){show('mfaView',true);document.getElementById('mfaContent').innerHTML=`<h1>Authenticator instellen</h1><p>Eenmalige beveiligingsinstelling laden…</p>`;const {data,error}=await sb.auth.mfa.enroll({factorType:'totp',friendlyName:'Grill Time Admin'});if(error||!data?.id||!data?.totp){document.getElementById('mfaContent').innerHTML=`<h1>Authenticator instellen</h1><div class="msg bad">Instellen mislukt. Log opnieuw in en probeer opnieuw.</div><button class="btn dark" onclick="logoutAll()">Uitloggen</button>`;return}currentMfaFactorId=data.id;const qr=data.totp.qr_code||'';const secret=data.totp.secret||'';document.getElementById('mfaContent').innerHTML=`<h1>Authenticator instellen</h1><p><strong>Eenmalig:</strong> scan deze QR-code met Google Authenticator, Authy, 1Password of een andere TOTP-app.</p><div class="qr-wrap"><img src="${esc(qr)}" alt="Authenticator QR-code"></div><p style="font-size:13px">Kan je niet scannen? Voeg deze sleutel handmatig toe:</p><div class="secret">${esc(secret)}</div><form id="mfaForm"><div class="field"><label>Vul daarna de 6-cijferige code in</label><input id="mfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="123456" required></div><button class="btn gold" style="width:100%;padding:13px" type="submit">Authenticator bevestigen</button></form><div id="mfaMsg"></div><div class="msg warn">Bewaar toegang tot je Authenticator veilig. Supabase geeft geen klassieke recovery-codes voor TOTP.</div><div class="mfa-actions"><button class="btn dark" onclick="logoutAll()">Later / Uitloggen</button></div>`;document.getElementById('mfaForm').onsubmit=verifyMfaCode}
 async function verifyMfaCode(e){e.preventDefault();const code=String(document.getElementById('mfaCode')?.value||'').replace(/\D/g,'').slice(0,6);if(code.length!==6)return mfaMessage('Vul een geldige code van 6 cijfers in.');const btn=e.submitter;btn.disabled=true;btn.textContent='Controleren…';mfaMessage('');const {error}=await sb.auth.mfa.challengeAndVerify({factorId:currentMfaFactorId,code});if(error){btn.disabled=false;btn.textContent='Opnieuw proberen';return mfaMessage('De code is niet correct of verlopen. Probeer de nieuwe code uit je app.')}await sb.auth.refreshSession();const a=await isRestaurantAdmin();if(!a.ok){await logoutAll();return}const {data:aal}=await sb.auth.mfa.getAuthenticatorAssuranceLevel();if(aal?.currentLevel!=='aal2'){btn.disabled=false;btn.textContent='Opnieuw proberen';return mfaMessage('De tweede beveiligingsstap kon niet worden bevestigd.')}show('mfaView',false);await enterDashboard(a.admin)}
-async function enterDashboard(admin){const {data:aal}=await sb.auth.mfa.getAuthenticatorAssuranceLevel();if(aal?.currentLevel!=='aal2'){await requireMfa(admin);return}show('loginView',false);show('mfaView',false);show('dashboardView',true);document.getElementById('subtitle').textContent=`Ingelogd als ${admin.display_name} · MFA beveiligd`;await loadOrders();subscribeRealtime();if(!pollTimer)pollTimer=setInterval(loadOrders,5000)}
+async function enterDashboard(admin){const {data:aal}=await sb.auth.mfa.getAuthenticatorAssuranceLevel();if(aal?.currentLevel!=='aal2'){await requireMfa(admin);return}show('loginView',false);show('mfaView',false);show('dashboardView',true);document.getElementById('subtitle').textContent=`Ingelogd als ${admin.display_name} · MFA beveiligd`;await loadOrders();subscribeRealtime();if(!pollTimer)pollTimer=setInterval(loadOrders,5000);initializePrinterStation()}
 async function loadOrders(){void loadDeliverySettings();if(loadInFlight)return;loadInFlight=true;try{const {data,error}=await sb.from('orders').select('*,order_items(id,quantity,product_name,line_total_cents,details,item_note)').order('created_at',{ascending:false}).limit(150);if(error){document.getElementById('orders').innerHTML=`<div class="msg bad">Toegang geweigerd of orders konden niet worden geladen.</div>`;return}const fresh=detectFresh(data||[]);orders=data||[];render();updateTabTitle();syncAlarmReminder(fresh)}finally{loadInFlight=false}}
 let deliveryPaused=null,deliverySettingsBusy=false,deliverySettingsLoading=false;
+function setPrinterMessage(text){document.getElementById('printerMessage').textContent=text||''}
+function renderPrinterStation(){
+  const panel=document.getElementById('printerControls'),state=document.getElementById('printerState'),button=document.getElementById('printerToggleBtn');
+  state.textContent=printerStationEnabled?'Printstation actief op deze laptop':'Printstation uit op deze laptop';
+  button.textContent=printerStationEnabled?'Printstation pauzeren':printerTestPassed?'Printstation starten':'Eerst testbon bevestigen';
+  button.disabled=!printerStationEnabled&&!printerTestPassed;
+  panel.className='msg '+(printerStationEnabled?'ok':'warn');
+  document.getElementById('printerTestBtn').disabled=printerPollBusy;
+}
+function initializePrinterStation(){
+  if(printerStationEnabled&&!printerTestPassed){printerStationEnabled=false;localStorage.setItem('gt-kitchen-printer-enabled','false')}
+  renderPrinterStation();
+  if(printerStationEnabled)startPrinterStation(false);
+  if(!printerTestPassed)setPrinterMessage('Druk eerst een testbon af en bevestig dat hij uit de keukenprinter kwam.');
+  void loadFailedPrinterJob();
+}
+function togglePrinterStation(){
+  if(!printerStationEnabled&&!printerTestPassed){setPrinterMessage('Druk eerst een testbon af en bevestig dat hij uit printer 192.168.1.100 kwam.');return}
+  printerStationEnabled=!printerStationEnabled;
+  localStorage.setItem('gt-kitchen-printer-enabled',String(printerStationEnabled));
+  renderPrinterStation();
+  if(printerStationEnabled)startPrinterStation(true);else stopPrinterStation();
+}
+function startPrinterStation(pollNow){
+  if(!printerStationEnabled)return;
+  if(printerPollTimer)clearInterval(printerPollTimer);
+  renderPrinterStation();
+  if(pollNow)void pollPrinterQueue();
+  printerPollTimer=setInterval(()=>void pollPrinterQueue(),2500);
+  setPrinterMessage('Wachtrij wordt gecontroleerd. Test de printer vóór de eerste echte keukenbon.');
+}
+function stopPrinterStation(){
+  if(printerPollTimer){clearInterval(printerPollTimer);printerPollTimer=null}
+  printerStationEnabled=false;
+  try{localStorage.setItem('gt-kitchen-printer-enabled','false')}catch(_){}
+  const panel=document.getElementById('printerControls');
+  if(panel)renderPrinterStation();
+}
+async function printPrinterTest(){
+  try{setPrinterMessage('Testbon naar de standaardprinter van Windows sturen…');await GTPrinter.printTestReceipt();if(confirm('Kwam de testbon uit de keukenprinter 192.168.1.100?')){printerTestPassed=true;localStorage.setItem('gt-kitchen-printer-test-passed','true');setPrinterMessage('Test bevestigd. Je kunt nu het printstation starten.');}else{printerTestPassed=false;localStorage.setItem('gt-kitchen-printer-test-passed','false');setPrinterMessage('Printstation blijft uit. Stel printer 192.168.1.100 eerst in Windows in als standaardprinter en test opnieuw.');}renderPrinterStation();}
+  catch(error){setPrinterMessage(error.message||'Testbon afdrukken is mislukt. Controleer de standaardprinter en probeer opnieuw.');}
+}
+async function loadFailedPrinterJob(){
+  const {data,error}=await sb.from('printer_jobs').select('id,payload,last_error,updated_at').eq('status','failed').order('updated_at',{ascending:false}).limit(1).maybeSingle();
+  if(error){setPrinterMessage('Printerwachtrij kon niet worden gelezen. Controleer je adminlogin.');return}
+  failedPrinterJob=data||null;
+  const box=document.getElementById('printerFailedBox');
+  if(!box)return;
+  box.classList.toggle('hidden',!failedPrinterJob);
+  if(failedPrinterJob){const no=String(failedPrinterJob.payload?.order_number||'').padStart(5,'0');document.getElementById('printerFailedMessage').textContent=`Bon GT-${no} is niet afgedrukt. Controleer eerst of er al papier uit de printer kwam. `;}
+}
+async function retryFailedPrinterJob(){
+  if(!failedPrinterJob)return;
+  const no=String(failedPrinterJob.payload?.order_number||'').padStart(5,'0');
+  if(!confirm(`Bon GT-${no} opnieuw afdrukken? Controleer eerst of de vorige poging niet al geprint is.`))return;
+  const {data,error}=await sb.from('printer_jobs').update({status:'queued',last_error:null,printed_at:null}).eq('id',failedPrinterJob.id).eq('status','failed').select('id').maybeSingle();
+  if(error||!data){setPrinterMessage('De bon kon niet opnieuw worden aangeboden. Vernieuw het dashboard.');return}
+  failedPrinterJob=null;document.getElementById('printerFailedBox').classList.add('hidden');setPrinterMessage(`Bon GT-${no} staat opnieuw in de wachtrij.`);if(printerStationEnabled)void pollPrinterQueue();
+}
+async function pollPrinterQueue(){
+  if(!printerStationEnabled||printerPollBusy)return;
+  printerPollBusy=true;renderPrinterStation();
+  let claimed=null;
+  try{
+    const {data:queued,error}=await sb.from('printer_jobs').select('id,payload,attempts,created_at').eq('status','queued').order('created_at',{ascending:true}).limit(1);
+    if(error)throw error;
+    if(!queued?.length)return
+    const candidate=queued[0];
+    const {data,error:claimError}=await sb.from('printer_jobs').update({status:'printing',attempts:(Number(candidate.attempts)||0)+1,last_error:null}).eq('id',candidate.id).eq('status','queued').select('id,payload').maybeSingle();
+    if(claimError)throw claimError;
+    if(!data)return;
+    claimed=data;
+    const no=String(data.payload?.order_number||'').padStart(5,'0');
+    setPrinterMessage(`Keukenbon GT-${no} wordt naar printer 192.168.1.100 gestuurd…`);
+    await GTPrinter.printReceipt(data.payload);
+    const {error:doneError}=await sb.from('printer_jobs').update({status:'printed',printed_at:new Date().toISOString(),last_error:null}).eq('id',data.id).eq('status','printing');
+    if(doneError)throw doneError;
+    setPrinterMessage(`De browser heeft keukenbon GT-${no} verwerkt. Controleer of hij uit printer 192.168.1.100 kwam.`);
+    failedPrinterJob=null;document.getElementById('printerFailedBox').classList.add('hidden');
+  }catch(error){
+    const message=String(error?.message||'Afdrukken mislukt').slice(0,500);
+    if(claimed){
+      const {error:updateError}=await sb.from('printer_jobs').update({status:'failed',last_error:message}).eq('id',claimed.id).eq('status','printing');
+      if(updateError)setPrinterMessage('Afdrukstatus kon niet worden opgeslagen. Controleer printer en bestelling handmatig.');
+      else{setPrinterMessage('Keukenbon niet bevestigd door de browser. Controleer de printer voordat je opnieuw afdrukt.');await loadFailedPrinterJob();}
+    }else setPrinterMessage(message);
+  }finally{printerPollBusy=false;renderPrinterStation();}
+}
+
 function renderDeliverySettings(){
   const button=document.getElementById('deliveryPauseBtn'),state=document.getElementById('deliveryState');
   button.disabled=deliverySettingsBusy||deliveryPaused===null;
@@ -91,6 +181,7 @@ function orderActionHtml(o){
  if(canProcess&&o.order_type==='delivery'&&['accepted','preparing','ready'].includes(o.status))actions.push(['on_way','Bestelling onderweg']);
  if(canProcess&&['accepted','preparing','ready','on_way'].includes(o.status))actions.push(['completed','Bestelling afgerond']);
  if(o.status==='rejected'&&o.payment_method==='online'&&o.payment_status==='paid')actions.push(['reject','Terugbetaling controleren']);
+ if(['accepted','preparing','ready','on_way','completed'].includes(o.status))actions.push(['reprint','🖨 Bon opnieuw afdrukken']);
  const warning=o.first_cash_phone_warning&&o.status==='new'?'<div class="msg warn">Telefonisch bevestigen vóór bereiding.</div>':'';
  const unpaid=!canProcess&&!['rejected','cancelled'].includes(o.status)?'<div class="msg warn">Online betaling nog niet bevestigd. Niet bereiden.</div>':'';
  return warning+unpaid+'<div class="status">'+actions.map(([action,label])=>`<button type="button" ${busyOrderIds.has(o.id)?'disabled':''} onclick="runOrderAction('${o.id}','${action}')">${label}</button>`).join('')+'</div>';
@@ -101,6 +192,7 @@ async function runOrderAction(id,action){
  let phoneConfirmed=false;
  if(action==='accept'&&order.first_cash_phone_warning){if(!confirm('Heb je deze cashbestelling telefonisch bevestigd?'))return;phoneConfirmed=true;}
  if(action==='reject'&&order.status==='new'&&!confirm(order.payment_method==='online'?'Bestelling weigeren en het online betaalde bedrag terugbetalen?':'Deze bestelling weigeren?'))return;
+ if(action==='reprint'&&!confirm('Keukenbon GT-'+String(order.order_number).padStart(5,'0')+' opnieuw in de printwachtrij zetten?'))return;
  busyOrderIds.add(id);render();
  let actionSucceeded=false;
  try{
@@ -114,8 +206,8 @@ async function runOrderAction(id,action){
   actionSucceeded=true;
   if(result.refundPending)alert('Bestelling geweigerd. Stripe verwerkt de terugbetaling. Controleer later via Terugbetaling controleren.');
  }catch(error){alert(error.message||'Actie niet opgeslagen.');}
- finally{if(actionSucceeded)currentFilter='active';busyOrderIds.delete(id);await loadOrders();}
+ finally{if(actionSucceeded&&action!=='reprint')currentFilter='active';busyOrderIds.delete(id);await loadOrders();}
 }
 async function markCashPaid(id){if(confirm('Cash werkelijk ontvangen?'))await runOrderAction(id,'cash_paid');}
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&document.getElementById('dashboardView')&&!document.getElementById('dashboardView').classList.contains('hidden'))loadOrders()});start();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&document.getElementById('dashboardView')&&!document.getElementById('dashboardView').classList.contains('hidden')){loadOrders();if(printerStationEnabled)void pollPrinterQueue()}});start();
 </script></body></html>

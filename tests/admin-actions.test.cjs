@@ -51,6 +51,6 @@ async function run(action,options={}){
  assert.match(c.orderActionHtml({id,status:'new',payment_method:'cash',payment_status:'unpaid'}),/Accepteren/);
  assert.doesNotMatch(c.orderActionHtml({id,status:'new',payment_method:'online',payment_status:'unpaid'}),/onclick/);
  assert.match(c.orderActionHtml({id,status:'rejected',payment_method:'online',payment_status:'paid'}),/Terugbetaling controleren/);
- assert.match(html,/if\(actionSucceeded\)currentFilter='active'/);
+ assert.match(html,/if\(actionSucceeded&&action!==\'reprint\'\)currentFilter=\'active\'/);
  console.log('PASS: admin actions, MFA, payment guards, cash refusal, refund success/pending/failure/retry, concurrent transitions, active/history separation and dashboard rendering. Stripe and database calls mocked.');
 })().catch(e=>{console.error(e);process.exitCode=1});

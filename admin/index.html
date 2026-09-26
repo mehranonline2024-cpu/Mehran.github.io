@@ -109,12 +109,14 @@ async function printNextQueuedJob(){
   if(!printerTestPassed){setPrinterMessage('Bevestig eerst dat de testbon uit de keukenprinter kwam.');return}
   await pollPrinterQueue(true);
 }
-async function pollPrinterQueue(manual=false){
+async function pollPrinterQueue(manual=false,jobId=null){
   if((!printerStationEnabled&&!manual)||printerPollBusy)return;
   printerPollBusy=true;renderPrinterStation();
   let claimed=null;
   try{
-    const {data:queued,error}=await sb.from('printer_jobs').select('id,payload,attempts,created_at').eq('status','queued').order('created_at',{ascending:true}).limit(1);
+    let query=sb.from('printer_jobs').select('id,payload,attempts,created_at').eq('status','queued');
+    if(jobId)query=query.eq('id',jobId);
+    const {data:queued,error}=await query.order('created_at',{ascending:true}).limit(1);
     if(error)throw error;
     if(!queued?.length){if(manual)setPrinterMessage('Er staat geen bon in de wachtrij.');return}
     const candidate=queued[0];
@@ -210,6 +212,11 @@ async function runOrderAction(id,action){
   if(!response.ok||!result.ok)throw new Error(result.error||'Actie niet opgeslagen.');
   actionSucceeded=true;
   if(result.refundPending)alert('Bestelling geweigerd. Stripe verwerkt de terugbetaling. Controleer later via Terugbetaling controleren.');
+  if(action==='reprint'){
+    document.getElementById('printerControls').scrollIntoView({behavior:'smooth',block:'start'});
+    if(printerTestPassed)await pollPrinterQueue(true,result.printJob?.id||null);
+    else alert('Bon staat in de wachtrij. Druk op deze laptop eerst een testbon af en bevestig dat hij uit de keukenprinter kwam; gebruik daarna de knop Wachtende bon nu afdrukken.');
+  }
  }catch(error){alert(error.message||'Actie niet opgeslagen.');}
  finally{if(actionSucceeded&&action!=='reprint')currentFilter='active';busyOrderIds.delete(id);await loadOrders();}
 }

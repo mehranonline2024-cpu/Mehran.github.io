@@ -53,7 +53,7 @@ function renderPrinterStation(){
   button.disabled=!printerStationEnabled&&!printerTestPassed;
   panel.className='msg '+(printerStationEnabled?'ok':'warn');
   document.getElementById('printerTestBtn').disabled=printerPollBusy;
-  document.getElementById('printerNextBtn').disabled=printerPollBusy||!printerTestPassed;
+  document.getElementById('printerNextBtn').disabled=printerPollBusy;
 }
 function initializePrinterStation(){
   if(printerStationEnabled&&!printerTestPassed){printerStationEnabled=false;localStorage.setItem('gt-kitchen-printer-enabled','false')}
@@ -106,7 +106,6 @@ async function retryFailedPrinterJob(){
   failedPrinterJob=null;document.getElementById('printerFailedBox').classList.add('hidden');setPrinterMessage(`Bon GT-${no} staat opnieuw in de wachtrij.`);if(printerStationEnabled)void pollPrinterQueue();
 }
 async function printNextQueuedJob(){
-  if(!printerTestPassed){setPrinterMessage('Bevestig eerst dat de testbon uit de keukenprinter kwam.');return}
   await pollPrinterQueue(true);
 }
 async function pollPrinterQueue(manual=false,jobId=null){
@@ -214,8 +213,7 @@ async function runOrderAction(id,action){
   if(result.refundPending)alert('Bestelling geweigerd. Stripe verwerkt de terugbetaling. Controleer later via Terugbetaling controleren.');
   if(action==='reprint'){
     document.getElementById('printerControls').scrollIntoView({behavior:'smooth',block:'start'});
-    if(printerTestPassed)await pollPrinterQueue(true,result.printJob?.id||null);
-    else alert('Bon staat in de wachtrij. Druk op deze laptop eerst een testbon af en bevestig dat hij uit de keukenprinter kwam; gebruik daarna de knop Wachtende bon nu afdrukken.');
+    await pollPrinterQueue(true,result.printJob?.id||null);
   }
  }catch(error){alert(error.message||'Actie niet opgeslagen.');}
  finally{if(actionSucceeded&&action!=='reprint')currentFilter='active';busyOrderIds.delete(id);await loadOrders();}

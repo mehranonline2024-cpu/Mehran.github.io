@@ -79,7 +79,13 @@
         doc.write(markup);
         doc.close();
         setTimeout(() => {
-          try { win.focus(); win.print(); }
+          try {
+            win.focus();
+            win.print();
+            // Some browsers do not fire afterprint for an iframe. print() returns
+            // when the dialog closes, so release the queue even in that case.
+            finish();
+          }
           catch (error) { finish(error); }
         }, 300);
       } catch (error) { finish(error); }

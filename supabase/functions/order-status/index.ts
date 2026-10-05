@@ -50,10 +50,17 @@ Deno.serve(async (req) => {
   if (req.method !== 'GET') return json(req, { error: 'Method not allowed' }, 405)
   const origin = req.headers.get('origin') || ''
   if (origin && !allowedOrigins.has(origin)) return json(req, { error: 'Origin not allowed' }, 403)
-  if (!stripeKey) return json(req, { error: 'Betalingscontrole tijdelijk niet beschikbaar.' }, 503)
-
   try {
     const url = new URL(req.url)
+    const token = url.searchParams.get('token') || ''
+    if(token){
+      if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token))return json(req,{error:'Ongeldige bestelcode'},400)
+      const {data:order,error}=await getAdminClient().from('orders').select('order_number,order_type,requested_time,status,payment_status,payment_method,total_cents').eq('tracking_token',token).maybeSingle()
+      if(error)throw error
+      if(!order)return json(req,{error:'Bestelling niet gevonden'},404)
+      return json(req,{ok:true,orderNumber:order.order_number,orderType:order.order_type,requestedTime:order.requested_time,status:order.status,paymentStatus:order.payment_status,paymentMethod:order.payment_method,totalCents:order.total_cents})
+    }
+    if (!stripeKey) return json(req, { error: 'Betalingscontrole tijdelijk niet beschikbaar.' }, 503)
     const sessionId = url.searchParams.get('session_id') || ''
     if (!sessionId.startsWith('cs_') || sessionId.length > 200) return json(req, { error: 'Ongeldige Stripe session' }, 400)
 

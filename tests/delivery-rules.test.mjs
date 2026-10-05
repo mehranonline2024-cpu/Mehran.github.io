@@ -21,7 +21,7 @@ function brusselsTime(dayOffset,hour,minute){
   return new Date(guess-offset);
 }
 
-async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oostende', place = 'Oostende', postcode = '8400', country = 'be', type = 'delivery', payment = 'cash', firstOrder = false, routeDown = false, noGeocode = false, address = 'Example street 1', requestedAt, requestedWindowEnd } = {}) {
+async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oostende', place = 'Oostende', postcode = '8400', country = 'be', type = 'delivery', payment = 'cash', firstOrder = false, routeDown = false, noGeocode = false, address = 'Example street 1', requestedAt, requestedWindowEnd, quoteOnly, expectedPrice, termsAccepted } = {}) {
   const writes = [], routes = [], sessions = [], coupons = [], geocodeQueries = [];
   const products = [{id:'food', name:'Meal', category:'Pizza', price_cents:food, active:true}, {id:'drink', name:'Drink', category:'Drinks', price_cents:drink, active:true}];
   const items = [{productId:'food', qty:1}, ...(drink ? [{productId:'drink', qty:1}] : [])];
@@ -69,7 +69,7 @@ async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oo
     }
   });
   vm.runInContext(serverCode, context);
-  const response = await handler(new Request('https://checkout.example.test', {method:'POST', headers:{origin:'https://grilltime.be', 'content-type':'application/json'}, body:JSON.stringify({customer:{name:'Local test', phone:'0400000000'}, orderType:type, paymentMethod:payment, address:type === 'delivery' ? address : null, city:type === 'delivery' ? city : null, requestedAt:requestedAt===undefined?brusselsTime(2,12,0).toISOString():requestedAt, requestedWindowEnd:requestedWindowEnd===undefined?(type==='delivery'?brusselsTime(2,12,15).toISOString():null):requestedWindowEnd, items})}));
+  const response = await handler(new Request('https://checkout.example.test', {method:'POST', headers:{origin:'https://grilltime.be', 'content-type':'application/json'}, body:JSON.stringify({customer:{name:'Local test', phone:'0400000000'}, orderType:type, paymentMethod:payment, address:type === 'delivery' ? address : null, city:type === 'delivery' ? city : null, requestedAt:requestedAt===undefined?brusselsTime(2,12,0).toISOString():requestedAt, requestedWindowEnd:requestedWindowEnd===undefined?(type==='delivery'?brusselsTime(2,12,15).toISOString():null):requestedWindowEnd, items, quoteOnly, expectedPrice, termsAccepted})}));
   return {status:response.status, body:await response.json(), writes, routes, sessions, coupons, geocodeQueries};
 }
 
@@ -197,7 +197,7 @@ test('Customer form enforces food minimum and preserves cart when offering picku
   const context = vm.createContext({console, URLSearchParams, Intl, gtIsEnglish:()=>false, gtText:nl=>nl, window:{gtIsEnglish:()=>false,addEventListener() {}},
     localStorage:{getItem:() => null, setItem() {}}, document:{getElementById:element, addEventListener() {}}, location:{search:''}, setInterval:() => 0,
     fetch:() => new Promise(() => {}), setTimeout:() => 0,
-    FormData:class { get(key) {return {name:'Local test', phone:'0400000000'}[key] || null;} }
+    FormData:class { get(key) {return {name:'Local test', phone:'0400000000'}[key] || null;} has() {return false;} }
   });
   vm.runInContext(browserCode, context);
   vm.runInContext("deliveryPaused=false;products=[{id:'food',category:'Pizza'},{id:'drink',category:'Drinks'}];cart=[{productId:'food',name:'Meal',qty:1,unitPrice:12,selections:[]},{productId:'drink',name:'Drink',qty:1,unitPrice:3,selections:[]}];orderType='delivery';renderCheckout()", context);
@@ -217,4 +217,26 @@ test('Customer form enforces food minimum and preserves cart when offering picku
   assert.match(html,/deliveryEstimateMin/);
   assert.match(html,/languageToggle/);
   assert.match(readFileSync(new URL('../order/i18n.js',import.meta.url),'utf8'),/Estimated delivery time: 25–45 minutes/);
+});
+
+test('Price preview has no order side effect and an altered total cannot be submitted', async () => {
+  const preview=await checkout({quoteOnly:true,firstOrder:true,meters:3100});
+  assert.equal(preview.status,200);
+  assert.equal(preview.body.quote,true);
+  assert.equal(preview.body.subtotalCents,1500);
+  assert.equal(preview.body.discountCents,150);
+  assert.equal(preview.body.deliveryFeeCents,399);
+  assert.equal(preview.body.totalCents,1749);
+  assert.equal(preview.writes.length,0);
+  assert.equal(preview.sessions.length,0);
+
+  const changed=await checkout({firstOrder:true,meters:3100,termsAccepted:true,expectedPrice:{subtotalCents:1500,discountCents:150,discountCode:'WELCOME10',deliveryFeeCents:299,totalCents:1649}});
+  assert.equal(changed.status,409);
+  assert.equal(changed.body.code,'price_changed');
+  assert.equal(changed.writes.length,0);
+
+  const confirmed=await checkout({firstOrder:true,meters:3100,termsAccepted:true,expectedPrice:{subtotalCents:1500,discountCents:150,discountCode:'WELCOME10',deliveryFeeCents:399,totalCents:1749}});
+  assert.equal(confirmed.status,200);
+  assert.equal(confirmed.body.totalCents,1749);
+  assert.equal(confirmed.writes.some(w=>w.table==='orders'),true);
 });

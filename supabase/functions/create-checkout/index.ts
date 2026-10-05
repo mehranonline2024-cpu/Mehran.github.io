@@ -176,6 +176,8 @@ Deno.serve(async (req)=>{
   try {
     const body = await req.json()
     const quoteOnly = body.quoteOnly === true
+    // Keep already-open checkout pages working while GitHub Pages deploys the new form.
+    const legacyClient = !quoteOnly && body.expectedPrice === undefined && body.termsAccepted === undefined
     const paymentMethod = body.paymentMethod === 'cash' ? 'cash' : 'online'
     if(paymentMethod==='online' && !stripeKey) throw new Error('Stripe secret ontbreekt')
     const items = Array.isArray(body.items)?body.items as CartItem[]:[]
@@ -203,7 +205,7 @@ Deno.serve(async (req)=>{
       const {count:recentOrders,error:recentError}=await supabase.from('orders').select('id',{count:'exact',head:true}).eq('customer_phone',customer.phone).gte('created_at',tenMinutesAgo)
       if(recentError) throw recentError
       if((recentOrders||0)>=6) return json(req,{error:'Te veel recente bestelpogingen. Probeer later opnieuw.'},429)
-      if(body.termsAccepted!==true)return json(req,{error:'Bevestig eerst de voorwaarden en het privacybeleid.'},400)
+      if(!legacyClient && body.termsAccepted!==true)return json(req,{error:'Bevestig eerst de voorwaarden en het privacybeleid.'},400)
     }
 
     const {data:products,error:productError}=await supabase.from('products').select('id,name,category,price_cents,active').in('id',productIds).eq('active',true)
@@ -272,7 +274,7 @@ Deno.serve(async (req)=>{
     const priceBreakdown={subtotalCents,discountCents,discountCode,deliveryFeeCents,totalCents}
     if(quoteOnly)return json(req,{ok:true,quote:true,...priceBreakdown,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),requestedTime:finalSlot.requestedTime})
     const expected=body.expectedPrice
-    if(!expected||!Object.entries(priceBreakdown).every(([key,value])=>expected[key]===value))return json(req,{error:'Het totaal is gewijzigd. Controleer de nieuwe prijs voordat je bestelt.',code:'price_changed'},409)
+    if(!legacyClient && (!expected||!Object.entries(priceBreakdown).every(([key,value])=>expected[key]===value)))return json(req,{error:'Het totaal is gewijzigd. Controleer de nieuwe prijs voordat je bestelt.',code:'price_changed'},409)
 
     let customerId:string; const existingCustomer=(matchingCustomers||[])[0] as any
     if(existingCustomer?.id){const {data:updated,error}=await supabase.from('customers').update({name:customer.name,phone:customer.phone,email:customer.email,phone_normalized:phoneNormalized}).eq('id',existingCustomer.id).select('id').single();if(error)throw error;customerId=updated.id}
@@ -285,15 +287,15 @@ Deno.serve(async (req)=>{
       subtotal_cents:subtotalCents,discount_cents:discountCents,discount_code:discountCode,
       delivery_fee_cents:deliveryFeeCents,delivery_distance_km:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),delivery_distance_method:orderType==='delivery'?'driving':null,
       total_cents:totalCents,currency:'eur'
-      ,terms_accepted_at:new Date().toISOString(),marketing_consent:body.marketingConsent===true
-    }).select('id,order_number,total_cents').single()
+      ,terms_accepted_at:body.termsAccepted===true?new Date().toISOString():null,marketing_consent:body.marketingConsent===true
+    }).select('id,order_number,total_cents,tracking_token').single()
     if(orderError) throw orderError
 
     const {error:itemError}=await supabase.from('order_items').insert(checkedItems.map(i=>({order_id:order.id,product_id:i.productId,product_name:i.name,quantity:i.qty,unit_price_cents:i.unitPriceCents,line_total_cents:i.lineTotalCents,selected_options:i.selectedOptions,details:i.details,item_note:i.itemNote})))
     if(itemError) throw itemError
 
     if(paymentMethod==='cash'){
-      return json(req,{ok:true,cashOrder:true,orderNumber:order.order_number,requestedTime:finalSlot.requestedTime,subtotalCents,discountCents,discountCode,welcomeDiscountApplied:discountCents>0,deliveryFeeCents,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),totalCents:order.total_cents})
+      return json(req,{ok:true,cashOrder:true,trackingToken:order.tracking_token,orderNumber:order.order_number,requestedTime:finalSlot.requestedTime,subtotalCents,discountCents,discountCode,welcomeDiscountApplied:discountCents>0,deliveryFeeCents,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),totalCents:order.total_cents})
     }
 
     const siteUrl=(Deno.env.get('SITE_URL')||'https://grilltime.be').replace(/\/$/,'')

@@ -175,6 +175,7 @@ Deno.serve(async (req)=>{
 
   try {
     const body = await req.json()
+    const quoteOnly = body.quoteOnly === true
     const paymentMethod = body.paymentMethod === 'cash' ? 'cash' : 'online'
     if(paymentMethod==='online' && !stripeKey) throw new Error('Stripe secret ontbreekt')
     const items = Array.isArray(body.items)?body.items as CartItem[]:[]
@@ -197,10 +198,13 @@ Deno.serve(async (req)=>{
     const slot=validateRequestedSlot({...body,orderType},storeSettings)
     if('error' in slot)return json(req,{error:slot.error},400)
 
-    const tenMinutesAgo=new Date(Date.now()-10*60*1000).toISOString()
-    const {count:recentOrders,error:recentError}=await supabase.from('orders').select('id',{count:'exact',head:true}).eq('customer_phone',customer.phone).gte('created_at',tenMinutesAgo)
-    if(recentError) throw recentError
-    if((recentOrders||0)>=6) return json(req,{error:'Te veel recente bestelpogingen. Probeer later opnieuw.'},429)
+    if(!quoteOnly){
+      const tenMinutesAgo=new Date(Date.now()-10*60*1000).toISOString()
+      const {count:recentOrders,error:recentError}=await supabase.from('orders').select('id',{count:'exact',head:true}).eq('customer_phone',customer.phone).gte('created_at',tenMinutesAgo)
+      if(recentError) throw recentError
+      if((recentOrders||0)>=6) return json(req,{error:'Te veel recente bestelpogingen. Probeer later opnieuw.'},429)
+      if(body.termsAccepted!==true)return json(req,{error:'Bevestig eerst de voorwaarden en het privacybeleid.'},400)
+    }
 
     const {data:products,error:productError}=await supabase.from('products').select('id,name,category,price_cents,active').in('id',productIds).eq('active',true)
     if(productError) throw productError
@@ -265,6 +269,11 @@ Deno.serve(async (req)=>{
     const finalSlot=validateRequestedSlot({...body,orderType},storeSettings)
     if('error' in finalSlot)return json(req,{error:finalSlot.error},400)
 
+    const priceBreakdown={subtotalCents,discountCents,discountCode,deliveryFeeCents,totalCents}
+    if(quoteOnly)return json(req,{ok:true,quote:true,...priceBreakdown,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),requestedTime:finalSlot.requestedTime})
+    const expected=body.expectedPrice
+    if(!expected||!Object.entries(priceBreakdown).every(([key,value])=>expected[key]===value))return json(req,{error:'Het totaal is gewijzigd. Controleer de nieuwe prijs voordat je bestelt.',code:'price_changed'},409)
+
     let customerId:string; const existingCustomer=(matchingCustomers||[])[0] as any
     if(existingCustomer?.id){const {data:updated,error}=await supabase.from('customers').update({name:customer.name,phone:customer.phone,email:customer.email,phone_normalized:phoneNormalized}).eq('id',existingCustomer.id).select('id').single();if(error)throw error;customerId=updated.id}
     else {const {data:inserted,error}=await supabase.from('customers').insert({name:customer.name,phone:customer.phone,email:customer.email,phone_normalized:phoneNormalized}).select('id').single();if(error)throw error;customerId=inserted.id}
@@ -276,6 +285,7 @@ Deno.serve(async (req)=>{
       subtotal_cents:subtotalCents,discount_cents:discountCents,discount_code:discountCode,
       delivery_fee_cents:deliveryFeeCents,delivery_distance_km:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),delivery_distance_method:orderType==='delivery'?'driving':null,
       total_cents:totalCents,currency:'eur'
+      ,terms_accepted_at:new Date().toISOString(),marketing_consent:body.marketingConsent===true
     }).select('id,order_number,total_cents').single()
     if(orderError) throw orderError
 

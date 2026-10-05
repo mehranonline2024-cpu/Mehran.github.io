@@ -95,7 +95,7 @@ function applyDeliveryStatus(){
   if(button&&orderType==='delivery'&&button.dataset.submitting!=='true'){
     const blocked=deliveryPaused!==false||cartFoodTotal()<DELIVERY_MIN;
     button.disabled=blocked;
-    button.textContent=deliveryPaused===true?'Bezorgen tijdelijk gepauzeerd':deliveryPaused===null?'Bezorgstatus controleren…':cartFoodTotal()<DELIVERY_MIN?'Minimum €15 eten voor bezorging':priceQuote?(paymentMethod==='cash'?gtText(`Bestelling plaatsen · ${euro(priceQuote.price.totalCents/100)} cash`,`Place order · ${euro(priceQuote.price.totalCents/100)} cash`):gtText(`Online betalen · ${euro(priceQuote.price.totalCents/100)}`,`Pay online · ${euro(priceQuote.price.totalCents/100)}`)):paymentMethod==='cash'?'Bestelling plaatsen · Cash':`Veilig online betalen · ${euro(cartTotal())} + bezorging`;
+    button.textContent=deliveryPaused===true?'Bezorgen tijdelijk gepauzeerd':deliveryPaused===null?'Bezorgstatus controleren…':cartFoodTotal()<DELIVERY_MIN?'Minimum €15 eten voor bezorging':priceQuote?(paymentMethod==='cash'?gtText(`Bestelling plaatsen · ${euro(priceQuote.price.totalCents/100)} cash`,`Place order · ${euro(priceQuote.price.totalCents/100)} cash`):gtText(`Online betalen · ${euro(priceQuote.price.totalCents/100)}`,`Pay online · ${euro(priceQuote.price.totalCents/100)}`)):gtText('Controleer adres en totaal','Check address and total');
   }
 }
 async function refreshDeliveryStatus(){

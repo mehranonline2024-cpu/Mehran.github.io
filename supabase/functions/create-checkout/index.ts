@@ -83,6 +83,27 @@ function normalizeSelectedOptions(raw: CartItem): Record<string,string[]> {
 }
 async function geocodeDeliveryAddress(addressLine:string, city:string) {
   const normalizedStreet = normalizeDeliveryStreet(addressLine)
+  // The Flemish address register resolves house numbers directly and remains
+  // available when the public Nominatim service throttles or rejects requests.
+  const exact = normalizedStreet.match(/^(.+?)\s+(\d+[a-zA-Z]?)(?:\s*\/\s*\w+)?$/)
+  if (exact) {
+    try {
+      const lookup = new URL('https://geo.api.vlaanderen.be/geolocation/v4/Location')
+      lookup.searchParams.set('q', `${normalizedStreet}, 8400 Oostende`)
+      lookup.searchParams.set('type', 'Housenumber')
+      lookup.searchParams.set('c', '5')
+      const response = await fetch(lookup, {headers:{'Accept':'application/json'}})
+      if (response.ok) {
+        const data = await response.json()
+        const match = (Array.isArray(data?.LocationResult) ? data.LocationResult : []).find((r:any) =>
+          String(r?.Zipcode || '') === '8400' && isOostende(r?.Municipality)
+          && normalizeText(r?.Thoroughfarename) === normalizeText(exact[1])
+          && normalizeText(r?.Housenumber) === normalizeText(exact[2])
+          && Number.isFinite(Number(r?.Location?.Lat_WGS84)) && Number.isFinite(Number(r?.Location?.Lon_WGS84)))
+        if (match) return {outsideArea:false as const,lat:Number(match.Location.Lat_WGS84),lon:Number(match.Location.Lon_WGS84),displayName:clean(match.FormattedAddress,300),normalizedStreet}
+      }
+    } catch (error) { console.warn('Flemish address lookup unavailable', error) }
+  }
   const q = `${normalizedStreet}, ${city}, Belgium`
   const url = new URL('https://nominatim.openstreetmap.org/search')
   url.searchParams.set('format','jsonv2'); url.searchParams.set('limit','8'); url.searchParams.set('countrycodes','be'); url.searchParams.set('addressdetails','1'); url.searchParams.set('q',q)

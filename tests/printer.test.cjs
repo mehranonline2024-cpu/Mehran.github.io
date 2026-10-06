@@ -20,7 +20,7 @@ const delivery = receiptHtml({
     line_total_cents: 2198,
   }],
   notes: 'Bel aan de achterdeur',
-  total_cents: 2497,
+  total_cents: 2277,
 });
 assert.match(delivery, /GT-00038/);
 assert.match(delivery, /BEZORGING/);
@@ -35,7 +35,7 @@ assert.match(delivery, /Producten/);
 assert.match(delivery, /Korting/);
 assert.match(delivery, /Bezorging/);
 assert.match(delivery, /€\s?2,99/);
-assert.match(delivery, /€\s?24,97/);
+assert.match(delivery, /€\s?22,77/);
 
 const escaped = receiptHtml({
   order_number: 39,

@@ -131,7 +131,7 @@ async function pollPrinterQueue(manual=false,jobId=null){
     if(error)throw error;
     if(!queued?.length){if(Date.now()-printerRecoveryLastCheck>30000)await loadFailedPrinterJob();if(manual)setPrinterMessage('Er staat geen bon in de wachtrij.');return}
     const candidate=queued[0];
-    const {data,error:claimError}=await sb.from('printer_jobs').update({status:'printing',attempts:(Number(candidate.attempts)||0)+1,last_error:null}).eq('id',candidate.id).eq('status','queued').select('id,payload,attempts').maybeSingle();
+    const {data,error:claimError}=await sb.from('printer_jobs').update({status:'printing',attempts:(Number(candidate.attempts)||0)+1,last_error:null}).eq('id',candidate.id).eq('status','queued').eq('attempts',candidate.attempts).select('id,payload,attempts').maybeSingle();
     if(claimError)throw claimError;
     if(!data)return;
     claimed=data;

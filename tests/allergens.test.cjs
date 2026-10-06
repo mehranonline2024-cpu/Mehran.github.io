@@ -1,0 +1,17 @@
+const assert=require('node:assert/strict');
+const {verified,describe,html}=require('../assets/allergens.js');
+assert.equal(verified({}),false);
+assert.match(describe({}),/Nog niet gecontroleerd/);
+assert.match(describe({allergens_contains:[]}),/Nog niet gecontroleerd/);
+assert.match(describe({allergens_contains:['milk'],allergens_may_contain:[],allergens_verified_at:null}),/Nog niet gecontroleerd/);
+const checked={allergens_contains:['wheat','milk'],allergens_may_contain:['sesame'],allergens_verified_at:'2026-10-06T10:00:00Z'};
+assert.equal(verified(checked),true);
+assert.match(describe(checked),/Tarwe \(gluten\), Melk/);
+assert.match(describe(checked),/Kan bevatten: Sesam/);
+assert.match(describe(checked,'en'),/Contains: Wheat \(gluten\), Milk/);
+assert.match(describe(checked,'en'),/May contain: Sesame/);
+assert.equal(verified({...checked,allergens_contains:['bogus']}),false);
+assert.match(describe({...checked,allergens_contains:[],allergens_may_contain:[]},'en'),/reported as an ingredient/);
+assert.doesNotMatch(html({...checked,name:'<script>alert(1)</script>'}),/<script>/);
+assert.match(html({},'en',true),/Not yet verified/);
+console.log('Verified allergen display and unknown-state tests passed');

@@ -8,6 +8,10 @@ const delivery = receiptHtml({
   address: 'Troonstraat 5, 8400 Oostende',
   phone: '0490000001',
   payment: 'Cash',
+  customer_name: 'TEST klant',
+  subtotal_cents: 2198,
+  discount_cents: 220,
+  delivery_fee_cents: 299,
   items: [{
     quantity: 2,
     name: 'Pizza Margherita',
@@ -26,6 +30,11 @@ assert.match(delivery, /0490000001/);
 assert.match(delivery, /Mayo · Extra kaas/);
 assert.match(delivery, /Geen ui/);
 assert.match(delivery, /Bel aan de achterdeur/);
+assert.match(delivery, /TEST klant/);
+assert.match(delivery, /Producten/);
+assert.match(delivery, /Korting/);
+assert.match(delivery, /Bezorging/);
+assert.match(delivery, /€\s?2,99/);
 assert.match(delivery, /€\s?24,97/);
 
 const escaped = receiptHtml({

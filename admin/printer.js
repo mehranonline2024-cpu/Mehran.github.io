@@ -49,6 +49,9 @@
       ${customer || address || phone ? `<section class="contact">${customer}${address}${phone}</section><hr class="rule">` : ''}
       <section><b>BESTELLING</b>${itemRows || '<div class="item">Geen artikelen</div>'}</section>
       ${notes}<hr class="rule"><div><b>BETALING</b><br>${escapeHtml(payload.payment || '—')}</div>
+      ${payload.subtotal_cents == null ? '' : `<div class="itemtop"><span>Producten</span><span>${money(payload.subtotal_cents)}</span></div>`}
+      ${Number(payload.discount_cents) > 0 ? `<div class="itemtop"><span>Korting</span><span>− ${money(payload.discount_cents)}</span></div>` : ''}
+      ${isDelivery && payload.delivery_fee_cents != null ? `<div class="itemtop"><span>Bezorging</span><span>${money(payload.delivery_fee_cents)}</span></div>` : ''}
       ${payload.total_cents == null ? '' : `<div class="total"><span>TOTAAL</span><span>${money(payload.total_cents)}</span></div>`}
       <div class="foot">Grill Time · Oostende</div>
     </body></html>`;
@@ -95,7 +98,7 @@
   const api = {
     receiptHtml,
     printReceipt(payload) { return printMarkup(receiptHtml(payload)); },
-    printTestReceipt() { return printMarkup(receiptHtml({}, true)); },
+    printTestReceipt() { return printMarkup(receiptHtml({order_type:'delivery',requested_time:'TEST · 12:00–12:15',customer_name:'TEST — geen echte bestelling',address:'TESTADRES — NIET BEZORGEN',phone:'TEST',payment:'TEST — NIET BEREIDEN',items:[{quantity:2,name:'TEST Pizza',details:['TEST extra kaas','TEST saus apart'],item_note:'TEST zonder ui',line_total_cents:2198}],notes:'TESTBON — controleer opties, opmerkingen en totaal.',subtotal_cents:2198,discount_cents:220,delivery_fee_cents:299,total_cents:2277}, true)); },
   };
   root.GTPrinter = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

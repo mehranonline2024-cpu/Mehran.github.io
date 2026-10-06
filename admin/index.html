@@ -18,10 +18,10 @@
 <body>
 <div id="loginView" class="login hidden"><h1>Grill Time Dashboard</h1><p>Alleen voor restaurantbeheer.</p><form id="loginForm"><div class="field"><label>E-mail</label><input id="email" type="email" required autocomplete="username"></div><div class="field"><label>Wachtwoord</label><input id="password" type="password" required autocomplete="current-password"></div><button class="btn gold" style="width:100%;padding:13px" type="submit">Inloggen</button></form><div id="loginMsg"></div></div>
 <div id="mfaView" class="mfa-box hidden"><div id="mfaContent"></div></div>
-<div id="dashboardView" class="wrap hidden"><div class="head"><div><h1>Grill Time · Dashboard</h1><small id="subtitle">Bestellingen en omzet</small></div><div class="actions"><span class="live"><span class="dot"></span> Live + auto</span><span class="live">🔐 MFA</span><button id="soundBtn" class="btn sound-off" type="button" onclick="toggleSound()">🔔 Geluid aan</button><button class="btn dark" onclick="loadOrders()">↻ Vernieuwen</button><button id="logoutBtn" class="btn dark">Uitloggen</button></div></div><section class="msg ok" id="deliveryControls" aria-label="Bezorging beheren"><div class="actions"><strong id="deliveryState" role="status">Bezorgstatus laden…</strong><button id="deliveryPauseBtn" class="btn gold" type="button" onclick="toggleDeliveryPause()" disabled>Leveringen pauzeren</button></div><div style="margin-top:8px;font-size:13px">Afhalen en bestaande bestellingen blijven actief.</div><div id="deliverySettingsError" role="alert"></div></section><section class="msg warn" id="printerControls" aria-label="Keukenprinter beheren"><div class="actions"><strong id="printerState" role="status">Printstation uit op deze laptop</strong><button id="printerToggleBtn" class="btn dark" type="button" onclick="togglePrinterStation()">Printstation starten</button><button id="printerTestBtn" class="btn dark" type="button" onclick="printPrinterTest()">Testbon afdrukken</button></div><div style="margin-top:8px;font-size:13px">Keukenprinter: 192.168.1.100:9100. Stel deze printer in Windows in als standaardprinter. Laat dit dashboard open op de laptop; ook bestellingen die je op de tablet accepteert worden dan afgedrukt. Voor afdrukken zonder dialoog moet Chrome met kiosk-printen starten.</div><div id="printerMessage" role="status" style="margin-top:8px"></div><div id="printerFailedBox" class="msg bad hidden"><span id="printerFailedMessage"></span> <button class="btn dark" type="button" onclick="retryFailedPrinterJob()">Bon opnieuw aanbieden</button></div></section><div id="stats" class="stats"></div><div id="filters" class="filters"></div><div id="orders"></div></div>
+<div id="dashboardView" class="wrap hidden"><div class="head"><div><h1>Grill Time · Dashboard</h1><small id="subtitle">Bestellingen en omzet</small></div><div class="actions"><span class="live"><span class="dot"></span> Live + auto</span><span class="live">🔐 MFA</span><button id="soundBtn" class="btn sound-off" type="button" onclick="toggleSound()">🔔 Geluid aan</button><button class="btn dark" onclick="loadOrders()">↻ Vernieuwen</button><button id="logoutBtn" class="btn dark">Uitloggen</button></div></div><section class="msg ok" id="deliveryControls" aria-label="Bezorging beheren"><div class="actions"><strong id="deliveryState" role="status">Bezorgstatus laden…</strong><button id="deliveryPauseBtn" class="btn gold" type="button" onclick="toggleDeliveryPause()" disabled>Leveringen pauzeren</button></div><div style="margin-top:8px;font-size:13px">Afhalen en bestaande bestellingen blijven actief.</div><div id="deliverySettingsError" role="alert"></div></section><section class="msg warn" id="printerControls" aria-label="Keukenprinter beheren"><div class="actions"><strong id="printerState" role="status">Printstation uit op deze laptop</strong><button id="printerToggleBtn" class="btn dark" type="button" onclick="togglePrinterStation()">Printstation starten</button><button id="printerTestBtn" class="btn dark" type="button" onclick="printPrinterTest()">Testbon afdrukken</button></div><div style="margin-top:8px;font-size:13px">Keukenprinter: 192.168.1.100:9100. Stel deze printer in Windows in als standaardprinter. Laat dit dashboard open op de laptop; ook bestellingen die je op de tablet accepteert worden dan afgedrukt. Voor afdrukken zonder dialoog moet Chrome met kiosk-printen starten.</div><div id="printerMessage" role="status" style="margin-top:8px"></div><div id="printerFailedBox" class="msg bad hidden"><span id="printerFailedMessage"></span> <button class="btn dark" type="button" onclick="retryFailedPrinterJob()">Bon opnieuw aanbieden</button> <button class="btn dark" type="button" onclick="confirmRecoveredPrinterJob()">Bon is al afgedrukt</button></div></section><details id="allergenManager" class="msg" style="border:1px solid #444"><summary style="cursor:pointer;font-weight:800">Allergenen beheren</summary><div id="allergenManagerBody"></div></details><div id="stats" class="stats"></div><div id="filters" class="filters"></div><div id="orders"></div></div>
 <div id="alertToast" class="alert-toast">🔔 Nieuwe bestelling ontvangen</div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script>window.GT_CONFIG={SUPABASE_URL:'https://qpaycwrhohunpfjqmlga.supabase.co',SUPABASE_PUBLISHABLE_KEY:'sb_publishable_lEAgOU350gcdQdI_zYVDAQ_6p7uNeYM',CONNECTED_MODE:true};</script>
-<script src="./printer.js?v=20260927-1"></script>
+<script src="./printer.js?v=20261006-1"></script>
 <script>
 const cfg=window.GT_CONFIG||{};const sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_PUBLISHABLE_KEY);const euroCents=n=>new Intl.NumberFormat('nl-BE',{style:'currency',currency:'EUR'}).format((Number(n)||0)/100);const statusLabel={pending_payment:'Wacht betaling',new:'Nieuw',accepted:'Geaccepteerd',on_way:'Onderweg',rejected:'Geweigerd',preparing:'Bezig',ready:'Klaar',completed:'Afgerond',cancelled:'Geannuleerd'};let orders=[],currentFilter='active',realtimeChannel=null,firstOrderLoad=true,knownAlertIds=new Set(),audioCtx=null,soundEnabled=false,pollTimer=null,loadInFlight=false,alarmBuffer=null,alarmRepeatTimer=null,currentMfaFactorId=null,printerStationEnabled=localStorage.getItem('gt-kitchen-printer-enabled')==='true',printerTestPassed=localStorage.getItem('gt-kitchen-printer-test-passed')==='true',printerPollTimer=null,printerPollBusy=false,failedPrinterJob=null;
 function esc(s=''){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}function show(id,yes){document.getElementById(id).classList.toggle('hidden',!yes)}function loginMessage(t){document.getElementById('loginMsg').innerHTML=t?`<div class="msg bad">${esc(t)}</div>`:''}function mfaMessage(t,type='bad'){const e=document.getElementById('mfaMsg');if(e)e.innerHTML=t?`<div class="msg ${type}">${esc(t)}</div>`:''}
@@ -84,26 +84,42 @@ function stopPrinterStation(){
   if(panel)renderPrinterStation();
 }
 async function printPrinterTest(){
-  try{setPrinterMessage('Testbon naar de standaardprinter van Windows sturen…');await GTPrinter.printTestReceipt();if(confirm('Kwam de testbon uit de keukenprinter 192.168.1.100?')){printerTestPassed=true;localStorage.setItem('gt-kitchen-printer-test-passed','true');setPrinterMessage('Test bevestigd. Je kunt nu het printstation starten.');}else{printerTestPassed=false;localStorage.setItem('gt-kitchen-printer-test-passed','false');setPrinterMessage('Printstation blijft uit. Stel printer 192.168.1.100 eerst in Windows in als standaardprinter en test opnieuw.');}renderPrinterStation();}
-  catch(error){setPrinterMessage(error.message||'Testbon afdrukken is mislukt. Controleer de standaardprinter en probeer opnieuw.');}
+  if(printerPollBusy)return;
+  printerPollBusy=true;renderPrinterStation();
+  try{
+    setPrinterMessage('Testbon naar de standaardprinter van Windows sturen…');
+    await GTPrinter.printTestReceipt();
+    printerTestPassed=confirm('Kwam de volledige testbon uit de keukenprinter 192.168.1.100?');
+    localStorage.setItem('gt-kitchen-printer-test-passed',String(printerTestPassed));
+    if(!printerTestPassed)stopPrinterStation();
+    setPrinterMessage(printerTestPassed?'Test bevestigd. Je kunt het printstation starten; laat deze laptop en dit dashboard open.':'Printstation is uit. Controleer printer 192.168.1.100 in Windows en test opnieuw.');
+  }catch(error){setPrinterMessage(error.message||'Testbon afdrukken is mislukt.');}
+  finally{printerPollBusy=false;renderPrinterStation();}
 }
+let printerRecoveryLastCheck=0;
 async function loadFailedPrinterJob(){
-  const {data,error}=await sb.from('printer_jobs').select('id,payload,last_error,updated_at').eq('status','failed').order('updated_at',{ascending:false}).limit(1).maybeSingle();
+  printerRecoveryLastCheck=Date.now();
+  const cutoff=new Date(Date.now()-5*60*1000).toISOString();
+  const {data,error}=await sb.from('printer_jobs').select('id,status,payload,last_error,updated_at,attempts').or(`status.eq.failed,and(status.eq.printing,updated_at.lt.${cutoff})`).order('updated_at',{ascending:true}).limit(1).maybeSingle();
   if(error){setPrinterMessage('Printerwachtrij kon niet worden gelezen. Controleer je adminlogin.');return}
   failedPrinterJob=data||null;
   const box=document.getElementById('printerFailedBox');
   if(!box)return;
   box.classList.toggle('hidden',!failedPrinterJob);
-  if(failedPrinterJob){const no=String(failedPrinterJob.payload?.order_number||'').padStart(5,'0');document.getElementById('printerFailedMessage').textContent=`Bon GT-${no} is niet afgedrukt. Controleer eerst of er al papier uit de printer kwam. `;}
+  if(failedPrinterJob){const no=String(failedPrinterJob.payload?.order_number||'').padStart(5,'0');document.getElementById('printerFailedMessage').textContent=`Afdrukstatus van bon GT-${no} is onzeker. Controleer of deze bon al uit de printer kwam. Sluit een eventueel open afdrukvenster vóór je opnieuw probeert. `;}
 }
-async function retryFailedPrinterJob(){
-  if(!failedPrinterJob)return;
-  const no=String(failedPrinterJob.payload?.order_number||'').padStart(5,'0');
-  if(!confirm(`Bon GT-${no} opnieuw afdrukken? Controleer eerst of de vorige poging niet al geprint is.`))return;
-  const {data,error}=await sb.from('printer_jobs').update({status:'queued',last_error:null,printed_at:null}).eq('id',failedPrinterJob.id).eq('status','failed').select('id').maybeSingle();
-  if(error||!data){setPrinterMessage('De bon kon niet opnieuw worden aangeboden. Vernieuw het dashboard.');return}
-  failedPrinterJob=null;document.getElementById('printerFailedBox').classList.add('hidden');setPrinterMessage(`Bon GT-${no} staat opnieuw in de wachtrij.`);if(printerStationEnabled)void pollPrinterQueue();
+async function resolvePrinterJob(alreadyPrinted){
+  if(!failedPrinterJob||printerPollBusy)return;
+  const job=failedPrinterJob,no=String(job.payload?.order_number||'').padStart(5,'0');
+  if(!confirm(alreadyPrinted?`Bevestig dat bon GT-${no} volledig uit de printer kwam. Hij wordt niet opnieuw afgedrukt.`:`Bon GT-${no} opnieuw aanbieden? Doe dit alleen als de bon ontbreekt en het vorige afdrukvenster gesloten is; anders kan hij dubbel worden afgedrukt.`))return;
+  const update=alreadyPrinted?{status:'printed',printed_at:new Date().toISOString(),last_error:null}:{status:'queued',last_error:null,printed_at:null};
+  const {data,error}=await sb.from('printer_jobs').update(update).eq('id',job.id).eq('status',job.status).eq('updated_at',job.updated_at).select('id').maybeSingle();
+  if(error||!data){setPrinterMessage('Status is intussen gewijzigd of niet opgeslagen. Controleer opnieuw.');await loadFailedPrinterJob();return}
+  setPrinterMessage(alreadyPrinted?`Bon GT-${no} als afgedrukt bevestigd.`:`Bon GT-${no} staat opnieuw in de wachtrij.`);
+  await loadFailedPrinterJob();if(!alreadyPrinted&&printerStationEnabled)void pollPrinterQueue();
 }
+async function retryFailedPrinterJob(){await resolvePrinterJob(false)}
+async function confirmRecoveredPrinterJob(){await resolvePrinterJob(true)}
 async function pollPrinterQueue(manual=false,jobId=null){
   if((!printerStationEnabled&&!manual)||printerPollBusy)return;
   printerPollBusy=true;renderPrinterStation();
@@ -113,23 +129,23 @@ async function pollPrinterQueue(manual=false,jobId=null){
     if(jobId)query=query.eq('id',jobId);
     const {data:queued,error}=await query.order('created_at',{ascending:true}).limit(1);
     if(error)throw error;
-    if(!queued?.length){if(manual)setPrinterMessage('Er staat geen bon in de wachtrij.');return}
+    if(!queued?.length){if(Date.now()-printerRecoveryLastCheck>30000)await loadFailedPrinterJob();if(manual)setPrinterMessage('Er staat geen bon in de wachtrij.');return}
     const candidate=queued[0];
-    const {data,error:claimError}=await sb.from('printer_jobs').update({status:'printing',attempts:(Number(candidate.attempts)||0)+1,last_error:null}).eq('id',candidate.id).eq('status','queued').select('id,payload').maybeSingle();
+    const {data,error:claimError}=await sb.from('printer_jobs').update({status:'printing',attempts:(Number(candidate.attempts)||0)+1,last_error:null}).eq('id',candidate.id).eq('status','queued').select('id,payload,attempts').maybeSingle();
     if(claimError)throw claimError;
     if(!data)return;
     claimed=data;
     const no=String(data.payload?.order_number||'').padStart(5,'0');
     setPrinterMessage(`Keukenbon GT-${no} wordt naar printer 192.168.1.100 gestuurd…`);
     await GTPrinter.printReceipt(data.payload);
-    const {error:doneError}=await sb.from('printer_jobs').update({status:'printed',printed_at:new Date().toISOString(),last_error:null}).eq('id',data.id).eq('status','printing');
+    const {error:doneError}=await sb.from('printer_jobs').update({status:'printed',printed_at:new Date().toISOString(),last_error:null}).eq('id',data.id).eq('status','printing').eq('attempts',data.attempts);
     if(doneError)throw doneError;
     setPrinterMessage(`De browser heeft keukenbon GT-${no} verwerkt. Controleer of hij uit printer 192.168.1.100 kwam.`);
     failedPrinterJob=null;document.getElementById('printerFailedBox').classList.add('hidden');
   }catch(error){
     const message=String(error?.message||'Afdrukken mislukt').slice(0,500);
     if(claimed){
-      const {error:updateError}=await sb.from('printer_jobs').update({status:'failed',last_error:message}).eq('id',claimed.id).eq('status','printing');
+      const {error:updateError}=await sb.from('printer_jobs').update({status:'failed',last_error:message}).eq('id',claimed.id).eq('status','printing').eq('attempts',claimed.attempts);
       if(updateError)setPrinterMessage('Afdrukstatus kon niet worden opgeslagen. Controleer printer en bestelling handmatig.');
       else{setPrinterMessage('Keukenbon niet bevestigd door de browser. Controleer de printer voordat je opnieuw afdrukt.');await loadFailedPrinterJob();}
     }else setPrinterMessage(message);
@@ -207,6 +223,7 @@ async function runOrderAction(id,action){
   if(!response.ok||!result.ok)throw new Error(result.error||'Actie niet opgeslagen.');
   actionSucceeded=true;
   if(result.refundPending)alert('Bestelling geweigerd. Stripe verwerkt de terugbetaling. Controleer later via Terugbetaling controleren.');
+  if(action==='accept'&&printerStationEnabled)void pollPrinterQueue();
   if(action==='reprint'){
     document.getElementById('printerControls').scrollIntoView({behavior:'smooth',block:'start'});
     await pollPrinterQueue(true,result.printJob?.id||null);
@@ -216,4 +233,4 @@ async function runOrderAction(id,action){
 }
 async function markCashPaid(id){if(confirm('Cash werkelijk ontvangen?'))await runOrderAction(id,'cash_paid');}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&document.getElementById('dashboardView')&&!document.getElementById('dashboardView').classList.contains('hidden')){loadOrders();if(printerStationEnabled)void pollPrinterQueue()}});start();
-</script></body></html>
+</script><script src="../assets/allergens.js?v=20261006-1"></script><script src="./allergens.js?v=20261006-1"></script></body></html>

@@ -21,7 +21,7 @@ function brusselsTime(dayOffset,hour,minute){
   return new Date(guess-offset);
 }
 
-async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oostende', place = 'Oostende', postcode = '8400', country = 'be', type = 'delivery', payment = 'cash', firstOrder = false, routeDown = false, noGeocode = false, address = 'Example street 1', requestedAt, requestedWindowEnd, quoteOnly, expectedPrice, termsAccepted } = {}) {
+async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oostende', place = 'Oostende', postcode = '8400', country = 'be', type = 'delivery', payment = 'cash', firstOrder = false, routeDown = false, noGeocode = false, officialResult = false, nominatimDown = false, address = 'Example street 1', wrongHouse = false, requestedAt, requestedWindowEnd, quoteOnly, expectedPrice, termsAccepted } = {}) {
   const writes = [], routes = [], sessions = [], coupons = [], geocodeQueries = [];
   const products = [{id:'food', name:'Meal', category:'Pizza', price_cents:food, active:true}, {id:'drink', name:'Drink', category:'Drinks', price_cents:drink, active:true}];
   const items = [{productId:'food', qty:1}, ...(drink ? [{productId:'drink', qty:1}] : [])];
@@ -57,11 +57,12 @@ async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oo
     coupons = {create:async args => {coupons.push(args); return {id:'local-coupon'};}};
     checkout = {sessions:{create:async args => {sessions.push(args); return {id:'local-session', url:'https://checkout.example.test/session'};}}};
   }
-  const context = vm.createContext({Request, Response, URL,
-    console:{error() {}}, Stripe:StripeMock, createClient:() => ({from:table => new Query(table)}),
+  const context = vm.createContext({Request, Response, URL, AbortSignal,
+    console:{error() {},warn() {}}, Stripe:StripeMock, createClient:() => ({from:table => new Query(table)}),
     Deno:{env:{get:key => ({STRIPE_SECRET_KEY:'local-mock-key', SUPABASE_URL:'https://database.example.test', SUPABASE_SERVICE_ROLE_KEY:'local-mock-key'}[key])}, serve:fn => {handler = fn;}},
     fetch:async url => {
-      if (url.hostname === 'nominatim.openstreetmap.org') {geocodeQueries.push(url.searchParams.get('q')); return Response.json(noGeocode ? [] : [{lat:'51.22', lon:'2.92', address:{country_code:country, postcode, city:place}}]);}
+      if (url.hostname === 'geo.api.vlaanderen.be') return Response.json({LocationResult:officialResult ? [{Zipcode:'8400',Municipality:'Oostende',Thoroughfarename:address.replace(/\s+\d+\w*$/, ''),Housenumber:address.match(/\d+\w*$/)?.[0],Location:{Lat_WGS84:51.22,Lon_WGS84:2.92},FormattedAddress:`${address}, 8400 Oostende`}] : []});
+      if (url.hostname === 'nominatim.openstreetmap.org') {geocodeQueries.push(url.searchParams.get('q')); return nominatimDown ? new Response('unavailable',{status:503}) : Response.json(noGeocode ? [] : [{lat:'51.22', lon:'2.92', address:{country_code:country, postcode, city:place, road:url.searchParams.get('q').split(',')[0].replace(/\s+\d+\w*$/, ''), house_number:wrongHouse?'999':url.searchParams.get('q').split(',')[0].match(/\d+\w*$/)?.[0]}}]);}
       assert.equal(url.hostname, 'router.project-osrm.org');
       assert.match(url.pathname, /^\/route\/v1\/driving\//);
       routes.push(String(url));
@@ -121,6 +122,15 @@ test('Common misspelling of Vrijheidstraat is corrected before address geocoding
   assert.equal(result.body.totalCents, 1799);
 });
 
+test('Official Flemish house-number lookup works when Nominatim is unavailable', async () => {
+  const result = await checkout({address:'Bronstraat 17',officialResult:true,nominatimDown:true,quoteOnly:true,meters:3190});
+  assert.equal(result.status,200,JSON.stringify(result.body));
+  assert.equal(result.body.deliveryDistanceKm,3.19);
+  assert.equal(result.body.deliveryFeeCents,399);
+  assert.equal(result.geocodeQueries.length,0);
+  assert.equal(result.writes.length,0);
+});
+
 test('Orders of €50 and €100 still pay delivery fees', async () => {
   for (const [food, meters, fee] of [[5000,2500,299], [10000,3000,399]]) {
     const result = await checkout({food, meters});
@@ -130,7 +140,7 @@ test('Orders of €50 and €100 still pay delivery fees', async () => {
 });
 
 test('Outside the distance or municipality offers pickup and creates no order', async () => {
-  for (const options of [{meters:4000.1}, {city:'8450 Bredene'}, {place:'Bredene'}, {postcode:'8450'}, {country:'nl'}]) {
+  for (const options of [{meters:4000.1}, {city:'8450 Bredene'}, {city:'8400 Brugge'}, {city:'8450 Oostende'}]) {
     const result = await checkout(options);
     assert.equal(result.status, 400);
     assert.equal(result.body.error, outsideMessage);
@@ -214,6 +224,7 @@ test('Customer form enforces food minimum and preserves cart when offering picku
   assert.match(element('checkoutSheet').innerHTML, /Geen minimum bestelbedrag en geen bezorgkosten/);
   assert.doesNotMatch(html, /FREE_DELIVERY|gratis vanaf €50|GRATIS<\/strong> vanaf €50/i);
   assert.match(html,/name=\"requestedSlot\"/);
+  assert.match(element('checkoutSheet').innerHTML,/name="city" value="8400 Oostende"/);
   assert.match(html,/deliveryEstimateMin/);
   assert.match(html,/languageToggle/);
   assert.match(readFileSync(new URL('../order/i18n.js',import.meta.url),'utf8'),/Estimated delivery time: 25–45 minutes/);
@@ -239,4 +250,38 @@ test('Price preview has no order side effect and an altered total cannot be subm
   assert.equal(confirmed.status,200);
   assert.equal(confirmed.body.totalCents,1749);
   assert.equal(confirmed.writes.some(w=>w.table==='orders'),true);
+});
+
+
+test('City-only, postcode-only and compact local spellings use the same verified delivery address', async () => {
+  for (const city of ['Oostende','8400','8400Oostende','8400 Oostende','8400, Oostende','Ostend','Oostende, België']) {
+    const result=await checkout({address:'oudemolenstraat 1',city,quoteOnly:true,meters:1827.3});
+    assert.equal(result.status,200,JSON.stringify({city,...result.body}));
+    assert.equal(result.body.deliveryFeeCents,299);
+    assert.equal(result.body.deliveryDistanceKm,1.83);
+    assert.equal(result.geocodeQueries[0],'Oude Molenstraat 1, 8400 Oostende, Belgium');
+    assert.match(result.routes[0],/2\.9202485,51\.2348621/);
+    assert.equal(result.writes.length,0);
+  }
+  const saved=await checkout({city:'Oostende'});
+  assert.equal(saved.writes.find(w=>w.table==='orders').value.city,'8400 Oostende');
+});
+
+test('Pasted complete local address is normalized and a missing locality gets a specific validation error', async () => {
+  const result=await checkout({address:'Oudemolenstraat 1, 8400 Oostende',city:'8400',quoteOnly:true});
+  assert.equal(result.status,200,JSON.stringify(result.body));
+  assert.equal(result.geocodeQueries[0],'Oude Molenstraat 1, 8400 Oostende, Belgium');
+  const missing=await checkout({city:''});
+  assert.equal(missing.body.code,'incomplete_delivery_address');
+  assert.equal(missing.writes.length,0);
+});
+
+test('Wrong or approximate geocoder matches are not classified as outside the distance zone', async () => {
+  for (const options of [{place:'Bredene'},{postcode:'8450'},{country:'nl'},{wrongHouse:true},{address:'Oude Molenstraat'}]) {
+    const result=await checkout({...options,quoteOnly:true});
+    assert.equal(result.status,400);
+    assert.equal(result.body.code,'address_not_found',JSON.stringify(result.body));
+    assert.equal(result.routes.length,0);
+    assert.equal(result.writes.length,0);
+  }
 });

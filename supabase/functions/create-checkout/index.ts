@@ -5,8 +5,10 @@ const stripeKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim()
 const stripe = new Stripe(stripeKey)
 const allowedOrigins = new Set(['https://grilltime.be','https://www.grilltime.be'])
 
-const RESTAURANT_LAT = 51.2330
-const RESTAURANT_LON = 2.9185
+// Grill Time, Albert I-promenade 9: verified business-map location.
+// The previous rounded point was on Brabantstraat, away from the restaurant.
+const RESTAURANT_LAT = 51.2348621
+const RESTAURANT_LON = 2.9202485
 const DELIVERY_MIN_CENTS = 1500
 const OUTSIDE_DELIVERY_MESSAGE = 'Helaas leveren we momenteel alleen binnen 4 km in Oostende. Je kunt je bestelling wel bij Grill Time afhalen.'
 const INNER_DISTANCE_KM = 2.5
@@ -26,21 +28,32 @@ function normalizeText(value: unknown) {
   return clean(value, 200).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'')
 }
 function normalizeDeliveryStreet(value: string) {
-  let s = clean(value, 180)
+  let s = clean(value, 180).replace(/\s+/g, ' ')
+  // Accept a pasted full local address without sending the locality twice.
+  s = s.replace(/,?\s+8400\s*(?:Oostende|Ostende|Ostend)(?:,?\s+(?:Belgium|Belgi[eë]))?\s*$/i, '').trim()
+  s = s.replace(/,\s*(?=\d)/, ' ')
   s = s.replace(/^oude\s*molen\s*straat\b/i, 'Oude Molenstraat')
   // In Oostende, "Vrijheidsstraat" is commonly entered for the official "Vrijheidstraat".
   s = s.replace(/^vrijheidsstraat\b/i, 'Vrijheidstraat')
   return s
 }
 function extractPostcode(value: string) {
-  const m = clean(value, 120).match(/\b(\d{4})\b/)
+  const m = clean(value, 120).match(/(?:^|\D)(\d{4})(?!\d)/)
   return m ? m[1] : null
 }
 function expectedPlace(value: string) {
-  return normalizeText(clean(value,120).replace(/\b\d{4}\b/g,'').replace(/belgi[eë]|belgium/gi,''))
+  return normalizeText(clean(value,120).replace(/\d{4}/g,'').replace(/belgi[eë]|belgium/gi,''))
 }
 function isOostende(value: unknown) {
   return ['oostende', 'ostende', 'ostend'].includes(normalizeText(value))
+}
+function normalizeDeliveryPlace(value: string) {
+  const postcode=extractPostcode(value),place=expectedPlace(value)
+  if(!postcode&&!place)return null
+  // In this one-city service area a known city name or its postcode is enough.
+  // The geocoder still verifies the actual street, house number and locality.
+  if((!postcode||postcode==='8400')&&(isOostende(place)||(!place&&postcode==='8400')))return '8400 Oostende'
+  return false
 }
 function isOostendeAddress(address:any) {
   return String(address?.country_code || '').toLowerCase() === 'be'
@@ -86,13 +99,14 @@ async function geocodeDeliveryAddress(addressLine:string, city:string) {
   // The Flemish address register resolves house numbers directly and remains
   // available when the public Nominatim service throttles or rejects requests.
   const exact = normalizedStreet.match(/^(.+?)\s+(\d+[a-zA-Z]?)(?:\s*\/\s*\w+)?$/)
+  if(!exact)return null
   if (exact) {
     try {
       const lookup = new URL('https://geo.api.vlaanderen.be/geolocation/v4/Location')
       lookup.searchParams.set('q', `${normalizedStreet}, 8400 Oostende`)
       lookup.searchParams.set('type', 'Housenumber')
       lookup.searchParams.set('c', '5')
-      const response = await fetch(lookup, {headers:{'Accept':'application/json'}})
+      const response = await fetch(lookup, {headers:{'Accept':'application/json'},signal:AbortSignal.timeout(8000)})
       if (response.ok) {
         const data = await response.json()
         const match = (Array.isArray(data?.LocationResult) ? data.LocationResult : []).find((r:any) =>
@@ -107,12 +121,15 @@ async function geocodeDeliveryAddress(addressLine:string, city:string) {
   const q = `${normalizedStreet}, ${city}, Belgium`
   const url = new URL('https://nominatim.openstreetmap.org/search')
   url.searchParams.set('format','jsonv2'); url.searchParams.set('limit','8'); url.searchParams.set('countrycodes','be'); url.searchParams.set('addressdetails','1'); url.searchParams.set('q',q)
-  const response = await fetch(url,{headers:{'Accept':'application/json','Accept-Language':'nl-BE,nl;q=0.9','User-Agent':'GrillTimeOostende/1.5 (https://grilltime.be)'}})
+  const response = await fetch(url,{headers:{'Accept':'application/json','Accept-Language':'nl-BE,nl;q=0.9','User-Agent':'GrillTimeOostende/1.5 (https://grilltime.be)'},signal:AbortSignal.timeout(8000)})
   if (!response.ok) throw new Error('Adrescontrole tijdelijk niet beschikbaar')
   const results = await response.json()
   if (!Array.isArray(results) || !results.length) return null
-  const candidates = results.filter((r:any) => isOostendeAddress(r?.address))
-  if (!candidates.length) return {outsideArea:true as const}
+  const candidates = results.filter((r:any) => isOostendeAddress(r?.address)
+    && normalizeText(r.address.road||r.address.pedestrian||r.address.residential||r.address.street)===normalizeText(exact[1])
+    && normalizeText(r.address.house_number)===normalizeText(exact[2]))
+  // A failed or approximate address match is not evidence of being outside 4 km.
+  if (!candidates.length) return null
   const first = candidates[0] || null
   if (!first?.lat || !first?.lon) return null
   const lat=Number(first.lat), lon=Number(first.lon); if(!Number.isFinite(lat)||!Number.isFinite(lon)) return null
@@ -122,7 +139,7 @@ async function drivingDistanceKm(lat:number, lon:number) {
   const coords = `${RESTAURANT_LON},${RESTAURANT_LAT};${lon},${lat}`
   const url = new URL(`https://router.project-osrm.org/route/v1/driving/${coords}`)
   url.searchParams.set('overview','false'); url.searchParams.set('steps','false'); url.searchParams.set('alternatives','false')
-  const response = await fetch(url,{headers:{'Accept':'application/json','User-Agent':'GrillTimeOostende/1.5 (https://grilltime.be)'}})
+  const response = await fetch(url,{headers:{'Accept':'application/json','User-Agent':'GrillTimeOostende/1.5 (https://grilltime.be)'},signal:AbortSignal.timeout(8000)})
   if(!response.ok) throw new Error('Routecontrole tijdelijk niet beschikbaar. Probeer opnieuw.')
   const data = await response.json(); const meters = data?.routes?.[0]?.distance
   if(typeof meters!=='number'||!Number.isFinite(meters)||meters<0) throw new Error('We konden geen geldige route naar dit adres berekenen.')
@@ -208,9 +225,10 @@ Deno.serve(async (req)=>{
     const phoneNormalized=normalizePhone(customer.phone)
     if(!customer.name||!customer.phone||phoneNormalized.length<8) return json(req,{error:'Naam en geldig telefoonnummer zijn verplicht'},400)
     const orderType=body.orderType==='delivery'?'delivery':'pickup'
-    const addressLine=clean(body.address,180)||null, city=clean(body.city,120)||null
-    if(orderType==='delivery'&&(!addressLine||!city)) return json(req,{error:'Bezorgadres ontbreekt'},400)
-    if(orderType==='delivery' && (extractPostcode(city!) !== '8400' || !isOostende(expectedPlace(city!)))) return outsideDelivery(req)
+    const addressLine=normalizeDeliveryStreet(clean(body.address,180))||null
+    const city=orderType==='delivery'?normalizeDeliveryPlace(clean(body.city,120)):null
+    if(orderType==='delivery'&&(!addressLine||city===null)) return json(req,{error:'Vul je straat, huisnummer en postcode/gemeente in.',code:'incomplete_delivery_address'},400)
+    if(orderType==='delivery'&&city===false)return outsideDelivery(req)
 
     const productIds=[...new Set(items.map(i=>clean(i.productId,80)).filter(Boolean))]
     if(!productIds.length) return json(req,{error:'Ongeldig winkelmandje'},400)
@@ -276,11 +294,11 @@ Deno.serve(async (req)=>{
     const discountCents=isWelcomeCustomer?Math.round(subtotalCents*WELCOME_DISCOUNT_PERCENT/100):0
     const discountCode=discountCents>0?'WELCOME10':null
 
-    let deliveryFeeCents=0; let deliveryDistanceKm:number|null=null
+    let deliveryFeeCents=0; let deliveryDistanceKm:number|null=null; let deliveryAddress:string|null=null
     if(orderType==='delivery'){
       if(foodSubtotalCents<DELIVERY_MIN_CENTS) return json(req,{error:'Minimum bestelling aan eten is €15,00, exclusief losse dranken en bezorgkosten.'},400)
-      const geo=await geocodeDeliveryAddress(addressLine!,city!); if(!geo) return json(req,{error:'We konden dit adres niet betrouwbaar koppelen aan de opgegeven postcode/gemeente. Controleer de straatnaam, huisnummer, postcode en gemeente.'},400)
-      if(geo.outsideArea) return outsideDelivery(req)
+      const geo=await geocodeDeliveryAddress(addressLine!,String(city)); if(!geo) return json(req,{error:'Adres niet gevonden. Controleer de straatnaam en het huisnummer in 8400 Oostende.',code:'address_not_found'},400)
+      deliveryAddress=geo.displayName||`${addressLine}, ${city}`
       deliveryDistanceKm=await drivingDistanceKm(geo.lat,geo.lon)
       if(deliveryDistanceKm>MAX_DISTANCE_KM) return outsideDelivery(req)
       deliveryFeeCents=deliveryDistanceKm<=INNER_DISTANCE_KM?INNER_FEE_CENTS:OUTER_FEE_CENTS
@@ -293,7 +311,7 @@ Deno.serve(async (req)=>{
     if('error' in finalSlot)return json(req,{error:finalSlot.error},400)
 
     const priceBreakdown={subtotalCents,discountCents,discountCode,deliveryFeeCents,totalCents}
-    if(quoteOnly)return json(req,{ok:true,quote:true,...priceBreakdown,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),requestedTime:finalSlot.requestedTime})
+    if(quoteOnly)return json(req,{ok:true,quote:true,...priceBreakdown,deliveryAddress,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),requestedTime:finalSlot.requestedTime})
     const expected=body.expectedPrice
     if(!legacyClient && (!expected||!Object.entries(priceBreakdown).every(([key,value])=>expected[key]===value)))return json(req,{error:'Het totaal is gewijzigd. Controleer de nieuwe prijs voordat je bestelt.',code:'price_changed'},409)
 

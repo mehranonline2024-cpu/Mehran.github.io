@@ -1,0 +1,30 @@
+{
+  "verified_on": "2026-10-07",
+  "scope": "Base ingredient information only; does not verify a complete dish or kitchen cross-contact.",
+  "ingredients": [
+    {
+      "key": "pizza_dough",
+      "product": "Piazzola Original 48h 53 x 275 g",
+      "ean": "8717568457857",
+      "contains": [
+        "wheat",
+        "soy"
+      ],
+      "identification": "Owner-provided ff.PNG, article 45172, EAN matches.",
+      "source": "https://psinfoodservice.com/product/1515069-piazzola-original-48h-53-x-275-g/",
+      "source_type": "Producer-provided specification in PS in foodservice; producer contact Euro Pizza Products.",
+      "may_contain_note": "Other listed allergen categories marked absent. Verify against the label when supplied."
+    },
+    {
+      "key": "tomato_base",
+      "product": "Oresto Tomatenpulp BIB 10 kg",
+      "ean": "5420053206238",
+      "contains": [],
+      "identification": "Owner-provided ss.PNG, article 16265, EAN matches.",
+      "source": "https://www.orestofoodpartners.be/Data/Documents/ip8kja12/268/Tomatenpulp-Oresto-dd-26062026-NL.pdf",
+      "specification_date": "2026-06-26",
+      "source_type": "Oresto Food Partners technical specification",
+      "allergen_note": "All 14 listed allergens marked absent according to recipe."
+    }
+  ]
+}

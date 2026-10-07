@@ -1,6 +1,6 @@
 {
   "verified_on": "2026-10-07",
-  "scope": "Base ingredient information only; does not verify a complete dish or kitchen cross-contact.",
+  "scope": "Ingredient sources and owner-confirmed recipes. Kitchen cross-contact is not independently verified by these records.",
   "ingredients": [
     {
       "key": "pizza_dough",
@@ -38,6 +38,24 @@
       "label_ingredients": "Mozzarella Kaas (KOEMELK), Zuursel, Zout, Stremsel, Zetmeel",
       "may_contain_note": "No separate precautionary allergen statement visible in the supplied photo; do not treat this as a kitchen cross-contact guarantee.",
       "verified_on": "2026-10-07"
+    }
+  ],
+  "dishes": [
+    {
+      "product_id": "margherita",
+      "recipe_ingredients": [
+        "pizza_dough",
+        "tomato_base",
+        "mozzarella"
+      ],
+      "contains": [
+        "wheat",
+        "soy",
+        "milk"
+      ],
+      "verified_on": "2026-10-07",
+      "recipe_confirmation": "Restaurant owner confirmed these three ingredients only, with no additions: 'neen alleen dat en geen extra'.",
+      "precautionary_statement_note": "No additional label statements supplied. Shared-kitchen cross-contact remains a separate assessment."
     }
   ]
 }

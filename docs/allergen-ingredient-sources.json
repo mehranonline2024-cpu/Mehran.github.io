@@ -25,6 +25,19 @@
       "specification_date": "2026-06-26",
       "source_type": "Oresto Food Partners technical specification",
       "allergen_note": "All 14 listed allergens marked absent according to recipe."
+    },
+    {
+      "key": "mozzarella",
+      "product": "PUUR MOZZARELLA 40+",
+      "ean": "5430000945028",
+      "contains": [
+        "milk"
+      ],
+      "identification": "Owner-provided 1000102393.jpg; 2 kg label, EAN 5430000945028.",
+      "source_type": "Current packaging label supplied by the restaurant owner",
+      "label_ingredients": "Mozzarella Kaas (KOEMELK), Zuursel, Zout, Stremsel, Zetmeel",
+      "may_contain_note": "No separate precautionary allergen statement visible in the supplied photo; do not treat this as a kitchen cross-contact guarantee.",
+      "verified_on": "2026-10-07"
     }
   ]
 }

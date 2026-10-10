@@ -1,0 +1,7 @@
+{
+  "name": "grilltime-checkout-tests",
+  "private": true,
+  "dependencies": {
+    "proj4": "2.20.7"
+  }
+}

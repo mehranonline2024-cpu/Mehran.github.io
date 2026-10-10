@@ -1,5 +1,6 @@
 import Stripe from 'npm:stripe@^22'
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import proj4 from 'npm:proj4@2.20.7'
 
 const stripeKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim()
 const stripe = new Stripe(stripeKey)
@@ -94,22 +95,47 @@ function normalizeSelectedOptions(raw: CartItem): Record<string,string[]> {
   }
   return out
 }
+class AddressLookupUnavailable extends Error {
+  constructor() { super('Adrescontrole tijdelijk niet beschikbaar') }
+}
+// Official address-register geometry uses Belgian Lambert 72, not WGS84.
+// Include the datum shift; treating these coordinates as GPS changes the route.
+const BELGIAN_LAMBERT_72 = '+proj=lcc +lat_1=51.1666672333333 +lat_2=49.8333339 +lat_0=90 +lon_0=4.36748666666667 +x_0=150000.013 +y_0=5400088.438 +ellps=intl +towgs84=-106.8686,52.2978,-103.7239,0.3366,-0.457,1.8422,-1.2747 +units=m +no_defs'
+function registerCoordinates(geometry:any) {
+  const gml=String(geometry?.gml || '')
+  if(geometry?.type!=='Point'||!gml.includes('/EPSG/0/31370'))return null
+  const point=gml.match(/<(?:\w+:)?pos>\s*([+-]?[\d.]+)\s+([+-]?[\d.]+)\s*<\/(?:\w+:)?pos>/)
+  if(!point)return null
+  const xy=[Number(point[1]),Number(point[2])]
+  if(!xy.every(Number.isFinite))return null
+  const [lon,lat]=proj4(BELGIAN_LAMBERT_72,'EPSG:4326',xy)
+  if(!Number.isFinite(lat)||!Number.isFinite(lon)||lat<50||lat>52||lon<2||lon>7)return null
+  return {lat,lon}
+}
+async function addressLookup(url:URL, provider:string) {
+  try {
+    const response=await fetch(url,{headers:{'Accept':'application/json','Accept-Language':'nl-BE,nl;q=0.9','User-Agent':'GrillTimeOostende/1.6 (https://grilltime.be)'},signal:AbortSignal.timeout(10000)})
+    if(!response.ok){console.warn('Address lookup rejected',{provider,status:response.status});return undefined}
+    return await response.json()
+  }catch(error){console.warn('Address lookup failed',{provider,reason:error instanceof Error?error.name:'unknown'});return undefined}
+}
 async function geocodeDeliveryAddress(addressLine:string, city:string) {
   const normalizedStreet = normalizeDeliveryStreet(addressLine)
   // The Flemish address register resolves house numbers directly and remains
   // available when the public Nominatim service throttles or rejects requests.
   const exact = normalizedStreet.match(/^(.+?)\s+(\d+[a-zA-Z]?)(?:\s*\/\s*\w+)?$/)
   if(!exact)return null
+  let officialLookupSucceeded=false
   if (exact) {
     try {
       const lookup = new URL('https://geo.api.vlaanderen.be/geolocation/v4/Location')
       lookup.searchParams.set('q', `${normalizedStreet}, 8400 Oostende`)
       lookup.searchParams.set('type', 'Housenumber')
       lookup.searchParams.set('c', '5')
-      const response = await fetch(lookup, {headers:{'Accept':'application/json'},signal:AbortSignal.timeout(8000)})
-      if (response.ok) {
-        const data = await response.json()
-        const match = (Array.isArray(data?.LocationResult) ? data.LocationResult : []).find((r:any) =>
+      const data=await addressLookup(lookup,'geolocation')
+      if (Array.isArray(data?.LocationResult)) {
+        officialLookupSucceeded=true
+        const match = data.LocationResult.find((r:any) =>
           String(r?.Zipcode || '') === '8400' && isOostende(r?.Municipality)
           && normalizeText(r?.Thoroughfarename) === normalizeText(exact[1])
           && normalizeText(r?.Housenumber) === normalizeText(exact[2])
@@ -118,13 +144,31 @@ async function geocodeDeliveryAddress(addressLine:string, city:string) {
       }
     } catch (error) { console.warn('Flemish address lookup unavailable', error) }
   }
+  // An independent, structured official lookup keeps valid addresses working
+  // when free-text geocoding fails or public Nominatim rejects server requests.
+  const register=new URL('https://api.basisregisters.vlaanderen.be/v2/adresmatch')
+  register.searchParams.set('gemeentenaam','Oostende');register.searchParams.set('postcode','8400')
+  register.searchParams.set('straatnaam',exact[1]);register.searchParams.set('huisnummer',exact[2]);register.searchParams.set('status','inGebruik')
+  const registry=await addressLookup(register,'address-register')
+  if(Array.isArray(registry?.adresMatches)) {
+    officialLookupSucceeded=true
+    for(const match of registry.adresMatches) {
+      if(match?.adresStatus!=='inGebruik'||String(match?.postinfo?.objectId)!=='8400'
+        ||!isOostende(match?.gemeente?.gemeentenaam?.geografischeNaam?.spelling)
+        ||normalizeText(match?.straatnaam?.straatnaam?.geografischeNaam?.spelling)!==normalizeText(exact[1])
+        ||normalizeText(match?.huisnummer)!==normalizeText(exact[2])||match?.busnummer)continue
+      const point=registerCoordinates(match?.adresPositie?.geometrie)
+      if(point)return {outsideArea:false as const,...point,displayName:clean(match?.volledigAdres?.geografischeNaam?.spelling,300),normalizedStreet}
+    }
+  }
   const q = `${normalizedStreet}, ${city}, Belgium`
   const url = new URL('https://nominatim.openstreetmap.org/search')
   url.searchParams.set('format','jsonv2'); url.searchParams.set('limit','8'); url.searchParams.set('countrycodes','be'); url.searchParams.set('addressdetails','1'); url.searchParams.set('q',q)
-  const response = await fetch(url,{headers:{'Accept':'application/json','Accept-Language':'nl-BE,nl;q=0.9','User-Agent':'GrillTimeOostende/1.5 (https://grilltime.be)'},signal:AbortSignal.timeout(8000)})
-  if (!response.ok) throw new Error('Adrescontrole tijdelijk niet beschikbaar')
-  const results = await response.json()
-  if (!Array.isArray(results) || !results.length) return null
+  const results=await addressLookup(url,'nominatim')
+  // A working official lookup with no exact match means an unrecognized
+  // address, even if Nominatim is blocked. It is not a service-wide outage.
+  if(!Array.isArray(results)){if(officialLookupSucceeded)return null;throw new AddressLookupUnavailable()}
+  if(!results.length)return null
   const candidates = results.filter((r:any) => isOostendeAddress(r?.address)
     && normalizeText(r.address.road||r.address.pedestrian||r.address.residential||r.address.street)===normalizeText(exact[1])
     && normalizeText(r.address.house_number)===normalizeText(exact[2]))
@@ -347,5 +391,5 @@ Deno.serve(async (req)=>{
       const {error:updateError}=await supabase.from('orders').update({stripe_checkout_session_id:session.id}).eq('id',order.id);if(updateError)throw updateError
       return json(req,{ok:true,checkoutUrl:session.url,orderNumber:order.order_number,subtotalCents,discountCents,discountCode,welcomeDiscountApplied:discountCents>0,deliveryFeeCents,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),totalCents:order.total_cents,mode:stripeKey.includes('_test_')?'test':'live'})
     }catch(stripeError){await supabase.from('orders').update({status:'cancelled',payment_status:'failed'}).eq('id',order.id);throw stripeError}
-  }catch(error){console.error(error);return json(req,{error:error instanceof Error?error.message:'Checkout kon niet worden gestart. Probeer opnieuw.'},500)}
+  }catch(error){console.error(error);if(error instanceof AddressLookupUnavailable)return json(req,{error:error.message,code:'address_lookup_unavailable',pickupAvailable:true},503);return json(req,{error:error instanceof Error?error.message:'Checkout kon niet worden gestart. Probeer opnieuw.'},500)}
 })

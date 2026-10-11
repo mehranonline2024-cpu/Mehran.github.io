@@ -29,14 +29,29 @@ function normalizeText(value: unknown) {
   return clean(value, 200).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'')
 }
 function normalizeDeliveryStreet(value: string) {
-  let s = clean(value, 180).replace(/\s+/g, ' ')
-  // Accept a pasted full local address without sending the locality twice.
-  s = s.replace(/,?\s+8400\s*(?:Oostende|Ostende|Ostend)(?:,?\s+(?:Belgium|Belgi[eë]))?\s*$/i, '').trim()
+  let s = clean(value, 180).normalize('NFKC').replace(/\s+/g, ' ')
+  // Accept a pasted address, including postcode-only or city-only suffixes.
+  s = s.replace(/[,\s]+(?:8400\s*(?:Oostende|Ostende|Ostend)?|Oostende|Ostende|Ostend)(?:[,\s]+(?:Belgium|Belgi[eë]))?\s*$/i, '').trim()
   s = s.replace(/,\s*(?=\d)/, ' ')
-  s = s.replace(/^oude\s*molen\s*straat\b/i, 'Oude Molenstraat')
+  s = s.replace(/^oude\s*molen\s*straat(?=\s|\d|$)/i, 'Oude Molenstraat')
   // In Oostende, "Vrijheidsstraat" is commonly entered for the official "Vrijheidstraat".
-  s = s.replace(/^vrijheidsstraat\b/i, 'Vrijheidstraat')
+  s = s.replace(/^vrijheidsstraat(?=\s|\d|$)/i, 'Vrijheidstraat')
   return s
+}
+type DeliveryAddressParts = { street:string; house:string; bus:string|null; lookupLine:string; normalizedStreet:string }
+function normalizeHouseNumber(value:unknown) { return clean(value,30).replace(/\s+/g,'').toUpperCase() }
+function parseDeliveryAddress(value:string):DeliveryAddressParts|null {
+  const line=normalizeDeliveryStreet(value)
+  const house='(\\d+(?:\\s?[a-zA-Z]|-\\d+[a-zA-Z]?)?)'
+  const unit='(?:\\s*(?:bus|bte|box|app(?:artement)?\\.?|apt\\.?|/|#)\\s*([a-zA-Z0-9][a-zA-Z0-9.-]*))?'
+  // Street first is the normal form; number first also occurs in pasted addresses.
+  const match=line.match(new RegExp('^(.+?)\\s*'+house+unit+'$','i'))
+  const numberFirst=!match?line.match(new RegExp('^'+house+'[,\\s]+(.+)$','i')):null
+  const street=clean(match?.[1]||numberFirst?.[2],150).replace(/[,\s]+$/,'')
+  const number=normalizeHouseNumber(match?.[2]||numberFirst?.[1])
+  if(!street||!/[a-zA-ZÀ-ÿ]/.test(street)||!number)return null
+  const bus=clean(match?.[3],30)||null,lookupLine=`${street} ${number}`
+  return {street,house:number,bus,lookupLine,normalizedStreet:lookupLine+(bus?` bus ${bus}`:'')}
 }
 function extractPostcode(value: string) {
   const m = clean(value, 120).match(/(?:^|\D)(\d{4})(?!\d)/)
@@ -55,11 +70,6 @@ function normalizeDeliveryPlace(value: string) {
   // The geocoder still verifies the actual street, house number and locality.
   if((!postcode||postcode==='8400')&&(isOostende(place)||(!place&&postcode==='8400')))return '8400 Oostende'
   return false
-}
-function isOostendeAddress(address:any) {
-  return String(address?.country_code || '').toLowerCase() === 'be'
-    && String(address?.postcode || '').trim() === '8400'
-    && [address?.city, address?.town, address?.municipality, address?.village].some(isOostende)
 }
 function outsideDelivery(req: Request) {
   return json(req, {error:OUTSIDE_DELIVERY_MESSAGE,code:'outside_delivery_area',pickupAvailable:true}, 400)
@@ -98,6 +108,14 @@ function normalizeSelectedOptions(raw: CartItem): Record<string,string[]> {
 class AddressLookupUnavailable extends Error {
   constructor() { super('Adrescontrole tijdelijk niet beschikbaar') }
 }
+type AddressSuggestion = { address:string; city:string; label:string; complete:boolean }
+class AddressNotFound extends Error {
+  suggestions:AddressSuggestion[]
+  constructor(suggestions:AddressSuggestion[]=[]) {
+    super('Adres niet gevonden. Kies een adres uit de suggesties of controleer de straatnaam en het huisnummer.')
+    this.suggestions=suggestions
+  }
+}
 // Official address-register geometry uses Belgian Lambert 72, not WGS84.
 // Include the datum shift; treating these coordinates as GPS changes the route.
 const BELGIAN_LAMBERT_72 = '+proj=lcc +lat_1=51.1666672333333 +lat_2=49.8333339 +lat_0=90 +lon_0=4.36748666666667 +x_0=150000.013 +y_0=5400088.438 +ellps=intl +towgs84=-106.8686,52.2978,-103.7239,0.3366,-0.457,1.8422,-1.2747 +units=m +no_defs'
@@ -119,65 +137,93 @@ async function addressLookup(url:URL, provider:string) {
     return await response.json()
   }catch(error){console.warn('Address lookup failed',{provider,reason:error instanceof Error?error.name:'unknown'});return undefined}
 }
-async function geocodeDeliveryAddress(addressLine:string, city:string) {
-  const normalizedStreet = normalizeDeliveryStreet(addressLine)
-  // The Flemish address register resolves house numbers directly and remains
-  // available when the public Nominatim service throttles or rejects requests.
-  const exact = normalizedStreet.match(/^(.+?)\s+(\d+[a-zA-Z]?)(?:\s*\/\s*\w+)?$/)
-  if(!exact)return null
-  let officialLookupSucceeded=false
-  if (exact) {
-    try {
-      const lookup = new URL('https://geo.api.vlaanderen.be/geolocation/v4/Location')
-      lookup.searchParams.set('q', `${normalizedStreet}, 8400 Oostende`)
-      lookup.searchParams.set('type', 'Housenumber')
-      lookup.searchParams.set('c', '5')
-      const data=await addressLookup(lookup,'geolocation')
-      if (Array.isArray(data?.LocationResult)) {
-        officialLookupSucceeded=true
-        const match = data.LocationResult.find((r:any) =>
-          String(r?.Zipcode || '') === '8400' && isOostende(r?.Municipality)
-          && normalizeText(r?.Thoroughfarename) === normalizeText(exact[1])
-          && normalizeText(r?.Housenumber) === normalizeText(exact[2])
-          && Number.isFinite(Number(r?.Location?.Lat_WGS84)) && Number.isFinite(Number(r?.Location?.Lon_WGS84)))
-        if (match) return {outsideArea:false as const,lat:Number(match.Location.Lat_WGS84),lon:Number(match.Location.Lon_WGS84),displayName:clean(match.FormattedAddress,300),normalizedStreet}
-      }
-    } catch (error) { console.warn('Flemish address lookup unavailable', error) }
+function localSuggestion(value:unknown):AddressSuggestion|null {
+  const label=clean(value,300)
+  const match=label.match(/^(.+),\s*(?:8400\s+)?(Oostende|Ostende|Ostend)$/i)
+  if(!match)return null
+  const parts=parseDeliveryAddress(match[1])
+  return {address:parts?.normalizedStreet||clean(match[1],180),city:'8400 Oostende',label,complete:!!parts}
+}
+async function addressSuggestions(query:string) {
+  const normalized=normalizeDeliveryStreet(query),parts=parseDeliveryAddress(normalized)
+  if(normalized.length<3)return []
+  const search=new URL('https://api.basisregisters.vlaanderen.be/v2/adressen/zoeken')
+  search.searchParams.set('q',parts?.lookupLine||normalized)
+  search.searchParams.set('gemeenteNaam','Oostende');search.searchParams.set('status','inGebruik');search.searchParams.set('limit','8')
+  const data=await addressLookup(search,'address-search')
+  let labels:unknown[]
+  if(Array.isArray(data?.resultaten))labels=data.resultaten.map((r:any)=>r?.result)
+  else {
+    const url=new URL('https://geo.api.vlaanderen.be/geolocation/v4/Suggestion')
+    url.searchParams.set('q',`${parts?.lookupLine||normalized}, 8400 Oostende`);url.searchParams.set('c','8')
+    const fallback=await addressLookup(url,'geolocation-suggestions')
+    if(!Array.isArray(fallback?.SuggestionResult))throw new AddressLookupUnavailable()
+    labels=fallback.SuggestionResult
   }
-  // An independent, structured official lookup keeps valid addresses working
-  // when free-text geocoding fails or public Nominatim rejects server requests.
-  const register=new URL('https://api.basisregisters.vlaanderen.be/v2/adresmatch')
-  register.searchParams.set('gemeentenaam','Oostende');register.searchParams.set('postcode','8400')
-  register.searchParams.set('straatnaam',exact[1]);register.searchParams.set('huisnummer',exact[2]);register.searchParams.set('status','inGebruik')
-  const registry=await addressLookup(register,'address-register')
-  if(Array.isArray(registry?.adresMatches)) {
-    officialLookupSucceeded=true
-    for(const match of registry.adresMatches) {
-      if(match?.adresStatus!=='inGebruik'||String(match?.postinfo?.objectId)!=='8400'
-        ||!isOostende(match?.gemeente?.gemeentenaam?.geografischeNaam?.spelling)
-        ||normalizeText(match?.straatnaam?.straatnaam?.geografischeNaam?.spelling)!==normalizeText(exact[1])
-        ||normalizeText(match?.huisnummer)!==normalizeText(exact[2])||match?.busnummer)continue
-      const point=registerCoordinates(match?.adresPositie?.geometrie)
-      if(point)return {outsideArea:false as const,...point,displayName:clean(match?.volledigAdres?.geografischeNaam?.spelling,300),normalizedStreet}
+  const unique=new Map<string,AddressSuggestion>()
+  for(const label of labels) {
+    const suggestion=localSuggestion(label)
+    if(suggestion) {
+      const suggestedParts=parseDeliveryAddress(suggestion.address)
+      if(parts?.bus&&suggestedParts?.house===parts.house&&normalizeText(suggestedParts.street)===normalizeText(parts.street)) {
+        suggestion.address=`${suggestedParts.lookupLine} bus ${parts.bus}`;suggestion.label=`${suggestion.address}, 8400 Oostende`
+      }
+      unique.set(suggestion.address,suggestion)
     }
   }
-  const q = `${normalizedStreet}, ${city}, Belgium`
-  const url = new URL('https://nominatim.openstreetmap.org/search')
-  url.searchParams.set('format','jsonv2'); url.searchParams.set('limit','8'); url.searchParams.set('countrycodes','be'); url.searchParams.set('addressdetails','1'); url.searchParams.set('q',q)
-  const results=await addressLookup(url,'nominatim')
-  // A working official lookup with no exact match means an unrecognized
-  // address, even if Nominatim is blocked. It is not a service-wide outage.
-  if(!Array.isArray(results)){if(officialLookupSucceeded)return null;throw new AddressLookupUnavailable()}
-  if(!results.length)return null
-  const candidates = results.filter((r:any) => isOostendeAddress(r?.address)
-    && normalizeText(r.address.road||r.address.pedestrian||r.address.residential||r.address.street)===normalizeText(exact[1])
-    && normalizeText(r.address.house_number)===normalizeText(exact[2]))
-  // A failed or approximate address match is not evidence of being outside 4 km.
-  if (!candidates.length) return null
-  const first = candidates[0] || null
-  if (!first?.lat || !first?.lon) return null
-  const lat=Number(first.lat), lon=Number(first.lon); if(!Number.isFinite(lat)||!Number.isFinite(lon)) return null
-  return {outsideArea:false as const,lat,lon,displayName:clean(first.display_name,300),normalizedStreet}
+  return [...unique.values()].slice(0,6)
+}
+function registerAddress(match:any) {
+  if(match?.adresStatus!=='inGebruik'||String(match?.postinfo?.objectId)!=='8400'
+    ||!isOostende(match?.gemeente?.gemeentenaam?.geografischeNaam?.spelling))return null
+  const street=clean(match?.straatnaam?.straatnaam?.geografischeNaam?.spelling,150)
+  const house=normalizeHouseNumber(match?.huisnummer),point=registerCoordinates(match?.adresPositie?.geometrie)
+  if(!street||!house||!point)return null
+  const bus=clean(match?.busnummer,30)||null
+  return {street,house,bus,...point,displayName:clean(match?.volledigAdres?.geografischeNaam?.spelling,300)}
+}
+async function geocodeDeliveryAddress(addressLine:string, _city:string) {
+  const parts=parseDeliveryAddress(addressLine)
+  if(!parts)throw new AddressNotFound()
+  // Structured fields work even when the free-text service returns no results.
+  // Fuzzy street matches are offered to the customer, never accepted silently.
+  const register=new URL('https://api.basisregisters.vlaanderen.be/v2/adresmatch')
+  register.searchParams.set('gemeentenaam','Oostende');register.searchParams.set('postcode','8400')
+  register.searchParams.set('straatnaam',parts.street);register.searchParams.set('huisnummer',parts.house);register.searchParams.set('status','inGebruik')
+  const registry=await addressLookup(register,'address-register')
+  const alternatives:AddressSuggestion[]=[]
+  if(Array.isArray(registry?.adresMatches)) {
+    const candidates=registry.adresMatches.map(registerAddress).filter(Boolean)
+    // Prefer the building address; an exact apartment address is also valid.
+    candidates.sort((a:any,b:any)=>Number(!!a.bus)-Number(!!b.bus))
+    for(const match of candidates) {
+      if(match.house!==parts.house||match.bus&&normalizeText(match.bus)!==normalizeText(parts.bus))continue
+      if(normalizeText(match.street)===normalizeText(parts.street)) {
+        const street=`${match.street} ${match.house}`+(parts.bus?` bus ${parts.bus}`:'')
+        return {lat:match.lat,lon:match.lon,displayName:`${street}, 8400 Oostende`,normalizedStreet:street}
+      }
+      const suggestion=localSuggestion(match.displayName)
+      if(suggestion)alternatives.push(suggestion)
+    }
+  }
+  const lookup=new URL('https://geo.api.vlaanderen.be/geolocation/v4/Location')
+  lookup.searchParams.set('q',`${parts.lookupLine}, 8400 Oostende`);lookup.searchParams.set('type','Housenumber');lookup.searchParams.set('c','5')
+  const geolocation=await addressLookup(lookup,'geolocation')
+  if(Array.isArray(geolocation?.LocationResult)) {
+    const match=geolocation.LocationResult.find((r:any)=>String(r?.Zipcode||'')==='8400'&&isOostende(r?.Municipality)
+      &&normalizeText(r?.Thoroughfarename)===normalizeText(parts.street)&&normalizeHouseNumber(r?.Housenumber)===parts.house
+      &&Number(r?.Location?.Lat_WGS84)>=50&&Number(r?.Location?.Lat_WGS84)<=52
+      &&Number(r?.Location?.Lon_WGS84)>=2&&Number(r?.Location?.Lon_WGS84)<=7)
+    if(match)return {lat:Number(match.Location.Lat_WGS84),lon:Number(match.Location.Lon_WGS84),displayName:`${parts.normalizedStreet}, 8400 Oostende`,normalizedStreet:parts.normalizedStreet}
+  }
+  if(!Array.isArray(registry?.adresMatches)&&!Array.isArray(geolocation?.LocationResult))throw new AddressLookupUnavailable()
+  if(!alternatives.length) {
+    try {
+      const suggested=await addressSuggestions(parts.lookupLine)
+      alternatives.push(...suggested.filter(s=>parseDeliveryAddress(s.address)?.house===parts.house))
+    }catch(_){/* A known non-match stays a non-match if suggestions are unavailable. */}
+  }
+  throw new AddressNotFound([...new Map(alternatives.map(s=>[s.address,s])).values()].slice(0,6))
 }
 async function drivingDistanceKm(lat:number, lon:number) {
   const coords = `${RESTAURANT_LON},${RESTAURANT_LAT};${lon},${lat}`
@@ -244,11 +290,18 @@ Deno.serve(async (req)=>{
     const origin=req.headers.get('origin')||''
     if(origin&&!allowedOrigins.has(origin))return json(req,{error:'Origin not allowed'},403)
     try{
+      const params=new URL(req.url).searchParams
+      if(params.get('action')==='address-suggestions') {
+        return json(req,{suggestions:await addressSuggestions(clean(params.get('q'),180))})
+      }
       const {data,error}=await getAdminClient().from('store_settings').select(STORE_SETTINGS_COLUMNS).eq('id','main').single()
       if(error||typeof data?.delivery_paused!=='boolean')throw new Error('Settings unavailable')
       return json(req,{deliveryPaused:data.delivery_paused,settings:{timezone:data.timezone,opensAt:String(data.opens_at).slice(0,5),closesAt:String(data.closes_at).slice(0,5),preorderDays:data.preorder_days,preparationLeadMinutes:data.preparation_lead_minutes,deliveryEstimateMin:data.delivery_estimate_min,deliveryEstimateMax:data.delivery_estimate_max}})
     }
-    catch(_){return json(req,{error:'Bezorgstatus tijdelijk niet beschikbaar'},503)}
+    catch(error){
+      if(error instanceof AddressLookupUnavailable)return json(req,{error:error.message,code:'address_lookup_unavailable',suggestions:[]},503)
+      return json(req,{error:'Bezorgstatus tijdelijk niet beschikbaar'},503)
+    }
   }
   if(req.method!=='POST') return json(req,{error:'Method not allowed'},405)
   const origin=req.headers.get('origin')||''
@@ -269,7 +322,7 @@ Deno.serve(async (req)=>{
     const phoneNormalized=normalizePhone(customer.phone)
     if(!customer.name||!customer.phone||phoneNormalized.length<8) return json(req,{error:'Naam en geldig telefoonnummer zijn verplicht'},400)
     const orderType=body.orderType==='delivery'?'delivery':'pickup'
-    const addressLine=normalizeDeliveryStreet(clean(body.address,180))||null
+    let addressLine=normalizeDeliveryStreet(clean(body.address,180))||null
     const city=orderType==='delivery'?normalizeDeliveryPlace(clean(body.city,120)):null
     if(orderType==='delivery'&&(!addressLine||city===null)) return json(req,{error:'Vul je straat, huisnummer en postcode/gemeente in.',code:'incomplete_delivery_address'},400)
     if(orderType==='delivery'&&city===false)return outsideDelivery(req)
@@ -341,7 +394,8 @@ Deno.serve(async (req)=>{
     let deliveryFeeCents=0; let deliveryDistanceKm:number|null=null; let deliveryAddress:string|null=null
     if(orderType==='delivery'){
       if(foodSubtotalCents<DELIVERY_MIN_CENTS) return json(req,{error:'Minimum bestelling aan eten is €15,00, exclusief losse dranken en bezorgkosten.'},400)
-      const geo=await geocodeDeliveryAddress(addressLine!,String(city)); if(!geo) return json(req,{error:'Adres niet gevonden. Controleer de straatnaam en het huisnummer in 8400 Oostende.',code:'address_not_found'},400)
+      const geo=await geocodeDeliveryAddress(addressLine!,String(city))
+      addressLine=geo.normalizedStreet
       deliveryAddress=geo.displayName||`${addressLine}, ${city}`
       deliveryDistanceKm=await drivingDistanceKm(geo.lat,geo.lon)
       if(deliveryDistanceKm>MAX_DISTANCE_KM) return outsideDelivery(req)
@@ -391,5 +445,10 @@ Deno.serve(async (req)=>{
       const {error:updateError}=await supabase.from('orders').update({stripe_checkout_session_id:session.id}).eq('id',order.id);if(updateError)throw updateError
       return json(req,{ok:true,checkoutUrl:session.url,orderNumber:order.order_number,subtotalCents,discountCents,discountCode,welcomeDiscountApplied:discountCents>0,deliveryFeeCents,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),totalCents:order.total_cents,mode:stripeKey.includes('_test_')?'test':'live'})
     }catch(stripeError){await supabase.from('orders').update({status:'cancelled',payment_status:'failed'}).eq('id',order.id);throw stripeError}
-  }catch(error){console.error(error);if(error instanceof AddressLookupUnavailable)return json(req,{error:error.message,code:'address_lookup_unavailable',pickupAvailable:true},503);return json(req,{error:error instanceof Error?error.message:'Checkout kon niet worden gestart. Probeer opnieuw.'},500)}
+  }catch(error){
+    if(error instanceof AddressNotFound)return json(req,{error:error.message,code:'address_not_found',suggestions:error.suggestions},400)
+    console.error(error)
+    if(error instanceof AddressLookupUnavailable)return json(req,{error:error.message,code:'address_lookup_unavailable',pickupAvailable:true},503)
+    return json(req,{error:error instanceof Error?error.message:'Checkout kon niet worden gestart. Probeer opnieuw.'},500)
+  }
 })

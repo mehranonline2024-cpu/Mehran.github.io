@@ -22,7 +22,7 @@ function brusselsTime(dayOffset,hour,minute){
   return new Date(guess-offset);
 }
 
-async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oostende', place = 'Oostende', postcode = '8400', country = 'be', type = 'delivery', payment = 'cash', firstOrder = false, routeDown = false, noGeocode = false, officialResult = false, nominatimDown = false, geolocationDown = false, registryDown = false, registryResult = false, registryHouse, registryStreet, registryStatus = 'inGebruik', registryBus, registryGml, address = 'Example street 1', wrongHouse = false, requestedAt, requestedWindowEnd, quoteOnly, expectedPrice, termsAccepted } = {}) {
+async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oostende', place = 'Oostende', postcode = '8400', type = 'delivery', payment = 'cash', firstOrder = false, routeDown = false, noGeocode = false, officialResult = false, geolocationDown = false, registryDown = false, registryResult = true, registryHouse, registryStreet, registryStatus = 'inGebruik', registryBus, registryGml, searchResults = [], suggestionsQuery, address = 'Example street 1', wrongHouse = false, requestedAt, requestedWindowEnd, quoteOnly, expectedPrice, termsAccepted } = {}) {
   const writes = [], routes = [], sessions = [], coupons = [], geocodeQueries = [], registryQueries = [];
   const products = [{id:'food', name:'Meal', category:'Pizza', price_cents:food, active:true}, {id:'drink', name:'Drink', category:'Drinks', price_cents:drink, active:true}];
   const items = [{productId:'food', qty:1}, ...(drink ? [{productId:'drink', qty:1}] : [])];
@@ -62,12 +62,16 @@ async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oo
     console:{error() {},warn() {}}, Stripe:StripeMock, createClient:() => ({from:table => new Query(table)}),
     Deno:{env:{get:key => ({STRIPE_SECRET_KEY:'local-mock-key', SUPABASE_URL:'https://database.example.test', SUPABASE_SERVICE_ROLE_KEY:'local-mock-key'}[key])}, serve:fn => {handler = fn;}},
     fetch:async url => {
-      if (url.hostname === 'geo.api.vlaanderen.be') return geolocationDown ? new Response('unavailable',{status:503}) : Response.json({LocationResult:officialResult ? [{Zipcode:'8400',Municipality:'Oostende',Thoroughfarename:address.replace(/\s+\d+\w*$/, ''),Housenumber:address.match(/\d+\w*$/)?.[0],Location:{Lat_WGS84:51.22,Lon_WGS84:2.92},FormattedAddress:`${address}, 8400 Oostende`}] : []});
-      if(url.hostname === 'api.basisregisters.vlaanderen.be') {
-        registryQueries.push(String(url));
-        return registryDown ? new Response('unavailable',{status:503}) : Response.json({adresMatches:registryResult ? [{postinfo:{objectId:postcode},gemeente:{gemeentenaam:{geografischeNaam:{spelling:place}}},straatnaam:{straatnaam:{geografischeNaam:{spelling:registryStreet||url.searchParams.get('straatnaam')}}},huisnummer:registryHouse||url.searchParams.get('huisnummer'),busnummer:registryBus,adresStatus:registryStatus,volledigAdres:{geografischeNaam:{spelling:'Oude Molenstraat 1, 8400 Oostende'}},adresPositie:{geometrie:{type:'Point',gml:registryGml||'<gml:Point srsName="https://www.opengis.net/def/crs/EPSG/0/31370"><gml:pos>48008.12 213467.96</gml:pos></gml:Point>'}}}] : []});
+      if (url.hostname === 'geo.api.vlaanderen.be') {
+        geocodeQueries.push(String(url));
+        return geolocationDown ? new Response('unavailable',{status:503}) : Response.json({LocationResult:officialResult&&!noGeocode ? [{Zipcode:postcode,Municipality:place,Thoroughfarename:address.replace(/\s+\d+\w*$/, ''),Housenumber:wrongHouse?'999':address.match(/\d+\w*$/)?.[0],Location:{Lat_WGS84:51.22,Lon_WGS84:2.92},FormattedAddress:`${address}, 8400 Oostende`}] : [],SuggestionResult:[]});
       }
-      if (url.hostname === 'nominatim.openstreetmap.org') {geocodeQueries.push(url.searchParams.get('q')); return nominatimDown ? new Response('unavailable',{status:503}) : Response.json(noGeocode ? [] : [{lat:'51.22', lon:'2.92', address:{country_code:country, postcode, city:place, road:url.searchParams.get('q').split(',')[0].replace(/\s+\d+\w*$/, ''), house_number:wrongHouse?'999':url.searchParams.get('q').split(',')[0].match(/\d+\w*$/)?.[0]}}]);}
+      if(url.hostname === 'api.basisregisters.vlaanderen.be') {
+        if(url.pathname.endsWith('/zoeken'))return registryDown ? new Response('unavailable',{status:503}) : Response.json({resultaten:searchResults});
+        registryQueries.push(String(url));
+        const street=registryStreet||url.searchParams.get('straatnaam'),house=registryHouse||(wrongHouse?'999':url.searchParams.get('huisnummer'));
+        return registryDown ? new Response('unavailable',{status:503}) : Response.json({adresMatches:registryResult&&!noGeocode ? [{postinfo:{objectId:postcode},gemeente:{gemeentenaam:{geografischeNaam:{spelling:place}}},straatnaam:{straatnaam:{geografischeNaam:{spelling:street}}},huisnummer:house,busnummer:registryBus,adresStatus:registryStatus,volledigAdres:{geografischeNaam:{spelling:`${street} ${house}, 8400 Oostende`}},adresPositie:{geometrie:{type:'Point',gml:registryGml||'<gml:Point srsName="https://www.opengis.net/def/crs/EPSG/0/31370"><gml:pos>48008.12 213467.96</gml:pos></gml:Point>'}}}] : []});
+      }
       assert.equal(url.hostname, 'router.project-osrm.org');
       assert.match(url.pathname, /^\/route\/v1\/driving\//);
       routes.push(String(url));
@@ -75,6 +79,10 @@ async function checkout({ food = 1500, drink = 0, meters = 2500, city = '8400 Oo
     }
   });
   vm.runInContext(serverCode, context);
+  if(suggestionsQuery!==undefined) {
+    const response=await handler(new Request('https://checkout.example.test?action=address-suggestions&q='+encodeURIComponent(suggestionsQuery),{headers:{origin:'https://grilltime.be'}}));
+    return {status:response.status,body:await response.json(),writes,routes,sessions};
+  }
   const response = await handler(new Request('https://checkout.example.test', {method:'POST', headers:{origin:'https://grilltime.be', 'content-type':'application/json'}, body:JSON.stringify({customer:{name:'Local test', phone:'0400000000'}, orderType:type, paymentMethod:payment, address:type === 'delivery' ? address : null, city:type === 'delivery' ? city : null, requestedAt:requestedAt===undefined?brusselsTime(2,12,0).toISOString():requestedAt, requestedWindowEnd:requestedWindowEnd===undefined?(type==='delivery'?brusselsTime(2,12,15).toISOString():null):requestedWindowEnd, items, quoteOnly, expectedPrice, termsAccepted})}));
   return {status:response.status, body:await response.json(), writes, routes, sessions, coupons, geocodeQueries, registryQueries};
 }
@@ -121,24 +129,25 @@ test('Driving-distance boundaries select the correct fee without rounding first'
 test('Common misspelling of Vrijheidstraat is corrected before address geocoding', async () => {
   const result = await checkout({address:'Vrijheidsstraat 31', meters:2400});
   assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(result.geocodeQueries[0], 'Vrijheidstraat 31, 8400 Oostende, Belgium');
+  assert.equal(new URL(result.registryQueries[0]).searchParams.get('straatnaam'),'Vrijheidstraat');
+  assert.equal(new URL(result.registryQueries[0]).searchParams.get('huisnummer'),'31');
   assert.equal(result.body.deliveryDistanceKm, 2.4);
   assert.equal(result.body.deliveryFeeCents, 299);
   assert.equal(result.body.totalCents, 1799);
 });
 
-test('Official Flemish house-number lookup works when Nominatim is unavailable', async () => {
-  const result = await checkout({address:'Bronstraat 17',officialResult:true,nominatimDown:true,quoteOnly:true,meters:3190});
+test('Independent free-text lookup works when the structured register is unavailable', async () => {
+  const result = await checkout({address:'Bronstraat 17',officialResult:true,registryDown:true,quoteOnly:true,meters:3190});
   assert.equal(result.status,200,JSON.stringify(result.body));
   assert.equal(result.body.deliveryDistanceKm,3.19);
   assert.equal(result.body.deliveryFeeCents,399);
-  assert.equal(result.geocodeQueries.length,0);
+  assert.equal(result.geocodeQueries.length,1);
   assert.equal(result.writes.length,0);
 });
 
-test('Structured official register recovers a failed geocoder without relying on Nominatim', async () => {
+test('Structured official register works when free-text geocoding is empty or unavailable', async () => {
   for(const geolocationDown of [false,true]) {
-    const result=await checkout({address:'Oude Molenstraat 1',registryResult:true,geolocationDown,nominatimDown:true,quoteOnly:true,meters:1827.3});
+    const result=await checkout({address:'Oude Molenstraat 1',registryResult:true,geolocationDown,quoteOnly:true,meters:1827.3});
     assert.equal(result.status,200,JSON.stringify(result.body));
     assert.equal(result.body.deliveryFeeCents,299);
     assert.equal(result.body.deliveryDistanceKm,1.83);
@@ -156,8 +165,8 @@ test('Structured official register recovers a failed geocoder without relying on
   }
 });
 
-test('A rejected public fallback does not turn an unrecognized address into a service outage', async () => {
-  const result=await checkout({noGeocode:true,nominatimDown:true,quoteOnly:true});
+test('An unrecognized address is a validation error rather than a service outage', async () => {
+  const result=await checkout({noGeocode:true,quoteOnly:true});
   assert.equal(result.status,400);
   assert.equal(result.body.code,'address_not_found');
   assert.equal(result.routes.length,0);
@@ -165,7 +174,7 @@ test('A rejected public fallback does not turn an unrecognized address into a se
 });
 
 test('If every address service fails, checkout offers pickup and creates no order or payment', async () => {
-  const result=await checkout({geolocationDown:true,registryDown:true,nominatimDown:true,quoteOnly:true});
+  const result=await checkout({geolocationDown:true,registryDown:true,quoteOnly:true});
   assert.equal(result.status,503);
   assert.equal(result.body.code,'address_lookup_unavailable');
   assert.equal(result.body.pickupAvailable,true);
@@ -176,7 +185,7 @@ test('If every address service fails, checkout offers pickup and creates no orde
 
 test('Official register cannot authorize a wrong house, street, town, status or bus-only match', async () => {
   for(const options of [{registryHouse:'999'},{registryStreet:'Different street'},{place:'Bredene'},{postcode:'8450'},{registryStatus:'gehistoreerd'},{registryBus:'0102'},{registryGml:'<gml:Point srsName="EPSG:4326"><gml:pos>48008 213468</gml:pos></gml:Point>'}]) {
-    const result=await checkout({...options,registryResult:true,nominatimDown:true,quoteOnly:true});
+    const result=await checkout({...options,registryResult:true,quoteOnly:true});
     assert.equal(result.status,400,JSON.stringify(result.body));
     assert.equal(result.body.code,'address_not_found');
     assert.equal(result.routes.length,0);
@@ -312,7 +321,8 @@ test('City-only, postcode-only and compact local spellings use the same verified
     assert.equal(result.status,200,JSON.stringify({city,...result.body}));
     assert.equal(result.body.deliveryFeeCents,299);
     assert.equal(result.body.deliveryDistanceKm,1.83);
-    assert.equal(result.geocodeQueries[0],'Oude Molenstraat 1, 8400 Oostende, Belgium');
+    assert.equal(new URL(result.registryQueries[0]).searchParams.get('straatnaam'),'Oude Molenstraat');
+    assert.equal(new URL(result.registryQueries[0]).searchParams.get('huisnummer'),'1');
     assert.match(result.routes[0],/2\.9202485,51\.2348621/);
     assert.equal(result.writes.length,0);
   }
@@ -323,18 +333,64 @@ test('City-only, postcode-only and compact local spellings use the same verified
 test('Pasted complete local address is normalized and a missing locality gets a specific validation error', async () => {
   const result=await checkout({address:'Oudemolenstraat 1, 8400 Oostende',city:'8400',quoteOnly:true});
   assert.equal(result.status,200,JSON.stringify(result.body));
-  assert.equal(result.geocodeQueries[0],'Oude Molenstraat 1, 8400 Oostende, Belgium');
+  assert.equal(new URL(result.registryQueries[0]).searchParams.get('straatnaam'),'Oude Molenstraat');
   const missing=await checkout({city:''});
   assert.equal(missing.body.code,'incomplete_delivery_address');
   assert.equal(missing.writes.length,0);
 });
 
 test('Wrong or approximate geocoder matches are not classified as outside the distance zone', async () => {
-  for (const options of [{place:'Bredene'},{postcode:'8450'},{country:'nl'},{wrongHouse:true},{address:'Oude Molenstraat'}]) {
+  for (const options of [{place:'Bredene'},{postcode:'8450'},{wrongHouse:true},{address:'Oude Molenstraat'}]) {
     const result=await checkout({...options,quoteOnly:true});
     assert.equal(result.status,400);
     assert.equal(result.body.code,'address_not_found',JSON.stringify(result.body));
     assert.equal(result.routes.length,0);
     assert.equal(result.writes.length,0);
   }
+});
+
+test('Common typed and pasted address formats resolve the exact same house and fee', async () => {
+  for(const address of ['Troonstraat5','Troonstraat, 5','5 Troonstraat','Troonstraat 5, 8400','Troonstraat 5, Oostende','Troonstraat 5, 8400 Oostende, België','Troonstraat 5 bus 0101','Troonstraat 5/0101','Troonstraat 5 box 0101']) {
+    const result=await checkout({address,quoteOnly:true,meters:2580});
+    assert.equal(result.status,200,JSON.stringify({address,...result.body}));
+    const lookup=new URL(result.registryQueries[0]);
+    assert.equal(lookup.searchParams.get('straatnaam'),'Troonstraat');
+    assert.equal(lookup.searchParams.get('huisnummer'),'5');
+    assert.equal(result.body.deliveryFeeCents,399);
+    if(/0101/.test(address))assert.equal(result.body.deliveryAddress,'Troonstraat 5 bus 0101, 8400 Oostende');
+    assert.equal(result.writes.length,0);assert.equal(result.sessions.length,0);
+  }
+  const saved=await checkout({address:'Troonstraat 5/0101'});
+  assert.equal(saved.writes.find(w=>w.table==='orders').value.address_line,'Troonstraat 5 bus 0101');
+});
+
+test('A letter suffix is preserved as part of the house number', async () => {
+  const result=await checkout({address:'Example street 12 A',quoteOnly:true});
+  assert.equal(result.status,200,JSON.stringify(result.body));
+  assert.equal(new URL(result.registryQueries[0]).searchParams.get('huisnummer'),'12A');
+  const wrong=await checkout({address:'Example street 12 A',registryHouse:'12',quoteOnly:true});
+  assert.equal(wrong.status,400);assert.equal(wrong.routes.length,0);
+});
+
+test('A fuzzy street result must be selected by the customer before a delivery is priced', async () => {
+  const mismatch=await checkout({address:'Brontsraat 17',registryStreet:'Bronstraat',quoteOnly:true});
+  assert.equal(mismatch.status,400);assert.equal(mismatch.body.code,'address_not_found');
+  assert.equal(mismatch.body.suggestions[0].address,'Bronstraat 17');
+  assert.equal(mismatch.routes.length,0);assert.equal(mismatch.writes.length,0);assert.equal(mismatch.sessions.length,0);
+  const accepted=await checkout({address:mismatch.body.suggestions[0].address,quoteOnly:true,meters:3280});
+  assert.equal(accepted.status,200);assert.equal(accepted.body.deliveryFeeCents,399);
+});
+
+test('Official autocomplete lists local streets and houses without creating orders or payments', async () => {
+  const result=await checkout({suggestionsQuery:'Troon',searchResults:[{result:'Troonstraat, Oostende'},{result:'Troonstraat 5, 8400 Oostende'},{result:'Troonstraat 5, 8400 Oostende'},{result:'Troonstraat 5, 8450 Bredene'}]});
+  assert.equal(result.status,200);
+  assert.equal(result.body.suggestions.length,2);
+  assert.equal(result.body.suggestions[0].complete,false);
+  assert.equal(result.body.suggestions[1].address,'Troonstraat 5');
+  assert.equal(result.body.suggestions[1].complete,true);
+  assert.equal(result.writes.length,0);assert.equal(result.routes.length,0);assert.equal(result.sessions.length,0);
+  const unit=await checkout({suggestionsQuery:'Troonstraat 5 bus 0101',searchResults:[{result:'Troonstraat 5, 8400 Oostende'}]});
+  assert.equal(unit.body.suggestions[0].address,'Troonstraat 5 bus 0101');
+  const unavailable=await checkout({suggestionsQuery:'Troon',geolocationDown:true,registryDown:true});
+  assert.equal(unavailable.status,503);assert.equal(unavailable.body.code,'address_lookup_unavailable');
 });

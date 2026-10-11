@@ -1,5 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const {stripTypeScriptTypes}=require('node:module');
+const proj4=require('proj4');
 const root=require('node:path').resolve(__dirname,'..');
 for(const page of ['admin','order']){
  const html=fs.readFileSync(`${root}/${page}/index.html`,'utf8');
@@ -17,7 +18,10 @@ async function checkout({paused=[false],type='delivery',payment='cash',get=false
    else if(table==='products')result.data=[{id:'pizza',name:'Pizza',category:'Pizza',price_cents:2000,active:true}];
    return Promise.resolve(result).then(resolve,reject);
   };return q;}};
- const context=vm.createContext({Request,Response,URL,console:{error(){}},createClient:()=>db,Stripe:class {constructor(){this.coupons={create:async()=>({id:'coupon'})};this.checkout={sessions:{create:async()=>{stripeCalls++;return{id:'session',url:'https://stripe.example'}}}}}},Deno:{env:{get:key=>({SUPABASE_URL:'https://example.test',SUPABASE_SERVICE_ROLE_KEY:'mock',STRIPE_SECRET_KEY:'mock'})[key]},serve:fn=>handler=fn},fetch:async url=>new Response(JSON.stringify(String(url).includes('nominatim')?[{lat:'51.23',lon:'2.91',address:{country_code:'be',postcode:'8400',city:'Oostende'}}]:{routes:[{distance:2000}]}))});
+ const context=vm.createContext({Request,Response,URL,AbortSignal,proj4,console:{error(){},warn(){}},createClient:()=>db,Stripe:class {constructor(){this.coupons={create:async()=>({id:'coupon'})};this.checkout={sessions:{create:async()=>{stripeCalls++;return{id:'session',url:'https://stripe.example'}}}}}},Deno:{env:{get:key=>({SUPABASE_URL:'https://example.test',SUPABASE_SERVICE_ROLE_KEY:'mock',STRIPE_SECRET_KEY:'mock'})[key]},serve:fn=>handler=fn},fetch:async url=>{
+  if(url.hostname==='api.basisregisters.vlaanderen.be')return Response.json({adresMatches:[{adresStatus:'inGebruik',postinfo:{objectId:'8400'},gemeente:{gemeentenaam:{geografischeNaam:{spelling:'Oostende'}}},straatnaam:{straatnaam:{geografischeNaam:{spelling:'Teststraat'}}},huisnummer:'1',busnummer:null,adresPositie:{geometrie:{type:'Point',gml:'<gml:Point srsName="https://www.opengis.net/def/crs/EPSG/0/31370"><gml:pos>48008.12 213467.96</gml:pos></gml:Point>'}}}]});
+  assert.equal(url.hostname,'router.project-osrm.org');return Response.json({routes:[{distance:2000}]});
+ }});
  vm.runInContext(source,context);
  const req=new Request('https://example.test',{method:get?'GET':'POST',headers:{origin:'https://grilltime.be','content-type':'application/json'},...(!get?{body:JSON.stringify({paymentMethod:payment,orderType:type,requestedAt:brusselsSlot().toISOString(),requestedWindowEnd:type==='delivery'?new Date(brusselsSlot().getTime()+15*60000).toISOString():null,items:[{productId:'pizza',qty:1}],customer:{name:'Test',phone:'0490000001'},address:'Teststraat 1',city:'8400 Oostende'})}:{})});
  const response=await handler(req);return{status:response.status,body:await response.json(),reads,writes,stripeCalls};

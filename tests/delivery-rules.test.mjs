@@ -183,6 +183,14 @@ test('If every address service fails, checkout offers pickup and creates no orde
   assert.equal(result.sessions.length,0);
 });
 
+test('An empty fallback cannot label a valid address as nonexistent during a register outage', async () => {
+  const result=await checkout({registryDown:true,quoteOnly:true});
+  assert.equal(result.status,503);
+  assert.equal(result.body.code,'address_lookup_unavailable');
+  assert.equal(result.body.pickupAvailable,true);
+  assert.equal(result.routes.length,0);assert.equal(result.writes.length,0);assert.equal(result.sessions.length,0);
+});
+
 test('Official register cannot authorize a wrong house, street, town, status or bus-only match', async () => {
   for(const options of [{registryHouse:'999'},{registryStreet:'Different street'},{place:'Bredene'},{postcode:'8450'},{registryStatus:'gehistoreerd'},{registryBus:'0102'},{registryGml:'<gml:Point srsName="EPSG:4326"><gml:pos>48008 213468</gml:pos></gml:Point>'}]) {
     const result=await checkout({...options,registryResult:true,quoteOnly:true});

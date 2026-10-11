@@ -216,7 +216,9 @@ async function geocodeDeliveryAddress(addressLine:string, _city:string) {
       &&Number(r?.Location?.Lon_WGS84)>=2&&Number(r?.Location?.Lon_WGS84)<=7)
     if(match)return {lat:Number(match.Location.Lat_WGS84),lon:Number(match.Location.Lon_WGS84),displayName:`${parts.normalizedStreet}, 8400 Oostende`,normalizedStreet:parts.normalizedStreet}
   }
-  if(!Array.isArray(registry?.adresMatches)&&!Array.isArray(geolocation?.LocationResult))throw new AddressLookupUnavailable()
+  // If the main register is down, an empty/approximate fallback cannot prove
+  // that the customer's address does not exist. Report an outage instead.
+  if(!Array.isArray(registry?.adresMatches))throw new AddressLookupUnavailable()
   if(!alternatives.length) {
     try {
       const suggested=await addressSuggestions(parts.lookupLine)

@@ -40,7 +40,7 @@ main{max-width:1120px;margin:auto;padding:8px 18px 42px}.section-title{display:f
 <script>
 const CFG={url:'https://qpaycwrhohunpfjqmlga.supabase.co',key:'sb_publishable_lEAgOU350gcdQdI_zYVDAQ_6p7uNeYM'};
 const H={'apikey':CFG.key,'Content-Type':'application/json'};
-const CAT_ORDER=['Online Deals','Pizza','Grill Time Classics','Sides','Drinks'];
+const CAT_ORDER=['Pizza','Online Deals','Grill Time Classics','Sides','Drinks'];
 const CAT_META={'Online Deals':['🔥','Online Deals'],'Pizza':['🍕','Pizza'],'Grill Time Classics':['🌯','Grill Time Classics'],'Sides':['🍟','Sides'],'Drinks':['🥤','Drinks']};
 const DELIVERY_MIN=15;
 let products=[],groups={},links={},cart=JSON.parse(localStorage.getItem('gt-cart-v4')||'[]'),selected=null,currentQty=1,activeCategory='Alles',orderType='pickup',paymentMethod='online',checkoutDraft={},priceQuote=null;

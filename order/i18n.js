@@ -1,5 +1,8 @@
 (() => {
   const en = {
+    "1 Regular pizza + 1 side naar keuze + 1 frisdrank (330 ml). Margherita inbegrepen; Regina + €1,50; overige pizza’s + €2 per pizza.":"1 Regular pizza + 1 side of your choice + 1 soft drink (330 ml). Margherita included; Regina + €1.50; all other pizzas + €2 per pizza.",
+    "2 Regular pizza’s + 1 side naar keuze + 2 frisdranken (330 ml). Margherita inbegrepen; Regina + €1,50; overige pizza’s + €2 per pizza.":"2 Regular pizzas + 1 side of your choice + 2 soft drinks (330 ml). Margherita included; Regina + €1.50; all other pizzas + €2 per pizza.",
+    "3 Regular pizza’s + 2 sides naar keuze + 3 frisdranken (330 ml). Margherita inbegrepen; Regina + €1,50; overige pizza’s + €2 per pizza.":"3 Regular pizzas + 2 sides of your choice + 3 soft drinks (330 ml). Margherita included; Regina + €1.50; all other pizzas + €2 per pizza.",
     "Pizza Menu + Side + Drank":"Pizza Meal + Side + Drink",
     "Duo Pizza Deal + Side + 2 Dranken":"Duo Pizza Deal + Side + 2 Drinks",
     "Grill Time Family Deal":"Grill Time Family Deal",

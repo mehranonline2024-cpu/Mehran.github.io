@@ -47,9 +47,13 @@ VALUES
  ('family-deal','familyPizza1',10),('family-deal','familyPizza2',20),('family-deal','familyPizza3',30),('family-deal','dealSide1',40),('family-deal','dealSide2',45),('family-deal','dealDrink1',50),('family-deal','dealDrink2',60),('family-deal','dealDrink3',70)
 ON CONFLICT (product_id,group_id) DO UPDATE SET sort_order=EXCLUDED.sort_order;
 
-UPDATE public.products SET name='Pizza Menu + Side + Drank',description='1 Regular pizza + 1 side naar keuze + 1 frisdrank (330 ml).',price_cents=1599 WHERE id='pizza-menu';
-UPDATE public.products SET name='Duo Pizza Deal + Side + 2 Dranken',description='2 Regular pizza’s + 1 side naar keuze + 2 frisdranken (330 ml).',price_cents=2799 WHERE id='duo-pizza-deal';
-UPDATE public.products SET name='Grill Time Family Deal',description='3 Regular pizza’s + 2 sides naar keuze + 3 frisdranken (330 ml). Scampi + €2 per pizza.',price_cents=4400 WHERE id='family-deal';
+UPDATE public.products SET name='Pizza Menu + Side + Drank',description='1 Regular pizza + 1 side naar keuze + 1 frisdrank (330 ml). Margherita inbegrepen; Regina + €1,50; overige pizza’s + €2 per pizza.',price_cents=1599 WHERE id='pizza-menu';
+UPDATE public.products SET name='Duo Pizza Deal + Side + 2 Dranken',description='2 Regular pizza’s + 1 side naar keuze + 2 frisdranken (330 ml). Margherita inbegrepen; Regina + €1,50; overige pizza’s + €2 per pizza.',price_cents=2799 WHERE id='duo-pizza-deal';
+UPDATE public.products SET name='Grill Time Family Deal',description='3 Regular pizza’s + 2 sides naar keuze + 3 frisdranken (330 ml). Margherita inbegrepen; Regina + €1,50; overige pizza’s + €2 per pizza.',price_cents=4400 WHERE id='family-deal';
+UPDATE public.products SET price_cents=1190 WHERE id='regina';
+UPDATE public.products SET price_cents=1590 WHERE id='scampi-pizza';
+UPDATE public.option_values SET price_delta_cents=CASE value_code WHEN 'margherita' THEN 0 WHEN 'regina' THEN 150 ELSE 200 END WHERE group_id IN ('dealPizza','duoPizza1','duoPizza2','familyPizza1','familyPizza2','familyPizza3');
+UPDATE public.products SET image_path='/assets/images/family-deal-three-pizzas-20261014.jpg' WHERE id='family-deal';
 COMMIT;
 
 SELECT p.id,p.name,p.price_cents,json_agg(json_build_object('group',g.id,'required',g.required,'max_select',g.max_select,'choices',(SELECT count(*) FROM public.option_values v WHERE v.group_id=g.id AND v.active)) ORDER BY link.sort_order) AS choices

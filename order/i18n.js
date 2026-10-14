@@ -45,15 +45,24 @@
     return (lead?.[0]||'')+(translated||core)+(tail?.[0]||'');
   }
   function translateNode(node){
-    if(node.nodeType===Node.TEXT_NODE){let saved=originals.get(node);if(!saved){saved={base:node.nodeValue||'',last:node.nodeValue||''};originals.set(node,saved)}else if(node.nodeValue!==saved.last)saved.base=node.nodeValue||'';const next=lang==='en'?mapText(saved.base):saved.base;saved.last=next;if(node.nodeValue!==next)node.nodeValue=next;return}
-    if(node.nodeType!==Node.ELEMENT_NODE)return;
-    for(const attr of ['placeholder','title','aria-label'])if(node.hasAttribute(attr)){if(attr==='aria-label'&&node.id==='languageToggle')continue;let saved=originalAttrs.get(node);if(!saved){saved={};originalAttrs.set(node,saved)}if(saved[attr]===undefined)saved[attr]=node.getAttribute(attr);node.setAttribute(attr,lang==='en'?(attrEn[saved[attr]]||saved[attr]):saved[attr])}
+    if(node.nodeType===Node.TEXT_NODE){if(!String(node.nodeValue||'').trim())return;let saved=originals.get(node);if(!saved){saved={base:node.nodeValue||'',last:node.nodeValue||''};originals.set(node,saved)}else if(node.nodeValue!==saved.last)saved.base=node.nodeValue||'';const next=lang==='en'?mapText(saved.base):saved.base;saved.last=next;if(node.nodeValue!==next)node.nodeValue=next;return}
+    if(node.nodeType!==Node.ELEMENT_NODE||['SCRIPT','STYLE','NOSCRIPT'].includes(node.tagName))return;
+    for(const attr of ['placeholder','title','aria-label'])if(node.hasAttribute(attr)){if(attr==='aria-label'&&node.id==='languageToggle')continue;let saved=originalAttrs.get(node);if(!saved){saved={};originalAttrs.set(node,saved)}if(saved[attr]===undefined)saved[attr]=node.getAttribute(attr);const next=lang==='en'?(attrEn[saved[attr]]||saved[attr]):saved[attr];if(node.getAttribute(attr)!==next)node.setAttribute(attr,next)}
     for(const child of node.childNodes)translateNode(child);
   }
-  function setLang(value){lang=value==='en'?'en':'nl';localStorage.setItem('gt-lang',lang);document.documentElement.lang=lang;const button=document.getElementById('languageToggle');if(button){button.textContent=lang==='en'?'NL':'EN';button.setAttribute('aria-label',lang==='en'?'Switch to Dutch':'Switch to English')}translateNode(document.body);window.dispatchEvent(new CustomEvent('gt-language-change',{detail:{language:lang}}))}
+  function setLang(value){lang=value==='en'?'en':'nl';localStorage.setItem('gt-lang',lang);document.documentElement.lang=lang;const button=document.getElementById('languageToggle');if(button){button.textContent=lang==='en'?'NL':'EN';button.setAttribute('aria-label',lang==='en'?'Switch to Dutch':'Switch to English')}observer.disconnect();try{translateNode(document.body)}finally{observer.observe(document.body,observerOptions)}window.dispatchEvent(new CustomEvent('gt-language-change',{detail:{language:lang}}))}
   window.gtLang=()=>lang;window.gtSetLanguage=setLang;window.gtIsEnglish=()=>lang==='en';window.gtText=(nl,english)=>lang==='en'?english:nl;window.gtTranslateValue=value=>lang==='en'?mapText(String(value??'')):String(value??'');
-  const observer=new MutationObserver(records=>{for(const record of records){if(record.type==='childList')record.addedNodes.forEach(translateNode);else if(record.type==='characterData')translateNode(record.target)}});
-  observer.observe(document.body,{subtree:true,childList:true,characterData:true});
+  const observerOptions={subtree:true,childList:true,characterData:true};
+  const observer=new MutationObserver(records=>{
+    if(lang!=='en')return;
+    observer.disconnect();
+    try{
+      const nodes=new Set();
+      for(const record of records){if(record.type==='childList')record.addedNodes.forEach(node=>nodes.add(node));else if(record.type==='characterData')nodes.add(record.target)}
+      for(const node of nodes)translateNode(node);
+    }finally{observer.observe(document.body,observerOptions)}
+  });
+  observer.observe(document.body,observerOptions);
   window.addEventListener('DOMContentLoaded',()=>setLang(lang));
   setTimeout(()=>setLang(lang),0);
 })();

@@ -14,7 +14,7 @@
     if(!verified(row))return en?'Not yet verified. Contact us before ordering if you have an allergy.':'Nog niet gecontroleerd. Heb je een allergie? Neem vóór je bestelt contact met ons op.';
     const names=a=>a.map(k=>entries.find(e=>e[0]===k)[en?2:1]).join(', ');
     const contains=row.allergens_contains.length?(en?'Contains: ':'Bevat: ')+names(row.allergens_contains):(en?'None of the 14 regulated allergens reported as an ingredient.':'Geen van de 14 wettelijke allergenen als ingrediënt opgegeven.');
-    return contains+(row.allergens_may_contain.length?(en?'. May contain: ':'. Kan bevatten: ')+names(row.allergens_may_contain):'');
+    return contains+(row.allergens_may_contain.length?(contains.endsWith('.')?' ':'. ')+(en?'May contain: ':'Kan bevatten: ')+names(row.allergens_may_contain):'');
   }
   function content(row,lang='nl',compact=false){
     const en=lang==='en';
@@ -26,8 +26,16 @@
     const data={allergens_contains:row?.allergens_contains,allergens_may_contain:row?.allergens_may_contain,allergens_verified_at:row?.allergens_verified_at};
     return `<span class="gt-allergen-text" data-gt-allergen="${esc(JSON.stringify(data))}" data-compact="${compact}" style="display:block;font-size:12px;line-height:1.5;margin-top:7px">${text}</span>`;
   }
+  function disclosure(row,optionGroups=[],lang='nl',translate=value=>value){
+    const sections=optionGroups.map(group=>{
+      const values=(group.values||[]).filter(value=>value.active!==false&&verified(value));
+      if(!values.length)return '';
+      return `<section class="allergen-option-group"><h5>${esc(translate(group.title||''))}</h5>${values.map(value=>`<div class="allergen-option"><strong>${esc(translate(value.label||''))}</strong>${html(value,lang,true)}</div>`).join('')}</section>`;
+    }).join('');
+    return `<details class="product-allergens"><summary>${lang==='en'?'Allergen information':'Allergeneninformatie'}</summary><div>${html(row,lang)}${sections}</div></details>`;
+  }
   function refresh(){const lang=root.document?.documentElement.lang==='en'?'en':'nl';root.document?.querySelectorAll('[data-gt-allergen]').forEach(el=>{try{const row=JSON.parse(el.dataset.gtAllergen),text=content(row,lang,el.dataset.compact==='true');if(!text){el.remove();return}if(el.innerHTML!==text)el.innerHTML=text;}catch(_){}});}
-  const api={entries,verified,describe,html};root.GTAllergens=api;
+  const api={entries,verified,describe,html,disclosure};root.GTAllergens=api;
   root.addEventListener?.('gt-language-change',refresh);
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

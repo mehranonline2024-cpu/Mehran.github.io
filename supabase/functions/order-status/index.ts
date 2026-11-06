@@ -3,11 +3,11 @@ import { createClient } from 'npm:@supabase/supabase-js@2'
 
 const stripeKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim()
 const stripe = new Stripe(stripeKey)
-const allowedOrigins = new Set(['https://grilltime.be','https://www.grilltime.be'])
+const allowedOrigins = new Set(['https://kustivo.be','https://www.kustivo.be','https://grilltime.be','https://www.grilltime.be'])
 
 function cors(req: Request) {
   const origin = req.headers.get('origin') || ''
-  const allowOrigin = allowedOrigins.has(origin) ? origin : 'https://grilltime.be'
+  const allowOrigin = allowedOrigins.has(origin) ? origin : 'https://kustivo.be'
   return {
     'Access-Control-Allow-Origin': allowOrigin,
     'Vary': 'Origin',
@@ -115,3 +115,4 @@ Deno.serve(async (req) => {
     return json(req, { error: 'Controle van betaling mislukt. Probeer opnieuw.' }, 500)
   }
 })
+

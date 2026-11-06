@@ -4,14 +4,14 @@ import proj4 from 'npm:proj4@2.20.7'
 
 const stripeKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim()
 const stripe = new Stripe(stripeKey)
-const allowedOrigins = new Set(['https://grilltime.be','https://www.grilltime.be'])
+const allowedOrigins = new Set(['https://kustivo.be','https://www.kustivo.be','https://grilltime.be','https://www.grilltime.be'])
 
 // Grill Time, Albert I-promenade 9: verified business-map location.
 // The previous rounded point was on Brabantstraat, away from the restaurant.
 const RESTAURANT_LAT = 51.2348621
 const RESTAURANT_LON = 2.9202485
 const DELIVERY_MIN_CENTS = 1500
-const OUTSIDE_DELIVERY_MESSAGE = 'Helaas leveren we momenteel alleen binnen 4 km in Oostende. Je kunt je bestelling wel bij Grill Time afhalen.'
+const OUTSIDE_DELIVERY_MESSAGE = 'Helaas leveren we momenteel alleen binnen 4 km in Oostende. Je kunt je bestelling wel bij Kustivo afhalen.'
 const INNER_DISTANCE_KM = 2.5
 const MAX_DISTANCE_KM = 4
 const INNER_FEE_CENTS = 299
@@ -76,7 +76,7 @@ function outsideDelivery(req: Request) {
 }
 function cors(req: Request) {
   const origin = req.headers.get('origin') || ''
-  const allowOrigin = allowedOrigins.has(origin) ? origin : 'https://grilltime.be'
+  const allowOrigin = allowedOrigins.has(origin) ? origin : 'https://kustivo.be'
   return {'Access-Control-Allow-Origin':allowOrigin,'Vary':'Origin','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Cache-Control':'no-store'}
 }
 function json(req: Request, body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...cors(req), 'Content-Type':'application/json; charset=utf-8' } }) }
@@ -267,7 +267,7 @@ function validateRequestedSlot(body:any,settings:any,now=new Date()) {
   const dayOffset=dayNumber(requested)-dayNumber(today)
   if(dayOffset<0||dayOffset>preorderDays)return {error:`Je kunt maximaal ${preorderDays} dagen vooruitbestellen.`}
   const minute=Number(requested.hour)*60+Number(requested.minute)
-  if(minute%15!==0||minute<opens||minute>closes)return {error:'Kies een tijdstip tussen 12:00 en 23:00 in stappen van 15 minuten.'}
+  if(minute%15!==0||minute<opens||minute>closes)return {error:'Kies een tijdstip tussen 11:30 en 23:00 in stappen van 15 minuten.'}
   let requestedWindowEnd:string|null=null
   if(body.orderType==='delivery'){
     const suppliedEnd=new Date(String(body.requestedWindowEnd||''))
@@ -437,7 +437,7 @@ Deno.serve(async (req)=>{
       return json(req,{ok:true,cashOrder:true,trackingToken:order.tracking_token,orderNumber:order.order_number,requestedTime:finalSlot.requestedTime,subtotalCents,discountCents,discountCode,welcomeDiscountApplied:discountCents>0,deliveryFeeCents,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),totalCents:order.total_cents})
     }
 
-    const siteUrl=(Deno.env.get('SITE_URL')||'https://grilltime.be').replace(/\/$/,'')
+    const siteUrl=(Deno.env.get('SITE_URL')||'https://kustivo.be').replace(/\/$/,'').replace(/^https:\/\/(?:www\.)?grilltime\.be$/,'https://kustivo.be')
     try{
       const lineItems:Stripe.Checkout.SessionCreateParams.LineItem[]=checkedItems.map(i=>({quantity:i.qty,price_data:{currency:'eur',unit_amount:i.unitPriceCents,product_data:{name:i.name,description:[...i.details,...(i.itemNote?[`Opmerking: ${i.itemNote}`]:[])].join(' · ').slice(0,450)||undefined}}}))
       if(deliveryFeeCents>0) lineItems.push({quantity:1,price_data:{currency:'eur',unit_amount:deliveryFeeCents,product_data:{name:'Bezorgkosten'}}})
@@ -454,3 +454,4 @@ Deno.serve(async (req)=>{
     return json(req,{error:error instanceof Error?error.message:'Checkout kon niet worden gestart. Probeer opnieuw.'},500)
   }
 })
+

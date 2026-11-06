@@ -16,7 +16,52 @@ const INNER_DISTANCE_KM = 2.5
 const MAX_DISTANCE_KM = 4
 const INNER_FEE_CENTS = 299
 const OUTER_FEE_CENTS = 399
-const WELCOME_DISCOUNT_PERCENT = 10
+const RETURN_DISCOUNT_CODE = 'KUSTIVO3'
+const RETURN_DISCOUNT_CENTS = 300
+const RETURN_DISCOUNT_MIN_CENTS = 2500
+
+type DiscountHistory = { completed_count:number|string; active_discount:any|null }
+function checkReturnDiscount(code:string, subtotalCents:number, history:DiscountHistory) {
+  if(!code)return {discountCents:0,discountCode:null}
+  if(code!==RETURN_DISCOUNT_CODE)return {error:'Deze kortingscode is niet geldig.',code:'discount_invalid'}
+  if(subtotalCents<RETURN_DISCOUNT_MIN_CENTS)return {error:'KUSTIVO3 geldt vanaf €25 aan producten, exclusief bezorgkosten.',code:'discount_minimum'}
+  if(history.active_discount)return {error:'KUSTIVO3 is al gebruikt of gereserveerd voor een openstaande bestelling.',code:'discount_used'}
+  if(Number(history.completed_count)!==1)return {error:'KUSTIVO3 geldt alleen bij je tweede bestelling. Gebruik het telefoonnummer van je eerste afgeronde bestelling.',code:'discount_second_order'}
+  return {discountCents:RETURN_DISCOUNT_CENTS,discountCode:RETURN_DISCOUNT_CODE}
+}
+async function readDiscountHistory(supabase:any, phone:string):Promise<DiscountHistory> {
+  const {data,error}=await supabase.rpc('get_kustivo3_history',{p_phone:phone}).single()
+  if(error||!data)throw new Error('Kortingscontrole tijdelijk niet beschikbaar. Probeer opnieuw.')
+  return data
+}
+async function discountHistory(supabase:any, phone:string) {
+  let history=await readDiscountHistory(supabase,phone)
+  const active=history.active_discount
+  // Abandoned online checkouts must not consume a coupon forever.
+  if(active?.status==='pending_payment'&&active.paymentMethod==='online'&&active.sessionId){
+    const session=await stripe.checkout.sessions.retrieve(active.sessionId)
+    if(session.status==='expired'&&session.payment_status!=='paid'){
+      const {error}=await supabase.from('orders').update({status:'cancelled',payment_status:'failed'})
+        .eq('id',active.id).eq('status','pending_payment').eq('payment_status','unpaid')
+      if(error)throw error
+      history=await readDiscountHistory(supabase,phone)
+    }
+  }
+  return history
+}
+async function cancelDiscountCheckout(supabase:any, token:string) {
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token))return
+  const {data:order,error}=await supabase.from('orders')
+    .select('id,status,payment_status,discount_code,stripe_checkout_session_id').eq('tracking_token',token).maybeSingle()
+  if(error)throw error
+  if(!order||order.discount_code!==RETURN_DISCOUNT_CODE||order.status!=='pending_payment'||order.payment_status!=='unpaid'||!order.stripe_checkout_session_id)return
+  let session=await stripe.checkout.sessions.retrieve(order.stripe_checkout_session_id)
+  if(session.status==='open')session=await stripe.checkout.sessions.expire(session.id)
+  if(session.status!=='expired'||session.payment_status==='paid')return
+  const {error:updateError}=await supabase.from('orders').update({status:'cancelled',payment_status:'failed'})
+    .eq('id',order.id).eq('status','pending_payment').eq('payment_status','unpaid')
+  if(updateError)throw updateError
+}
 
 function clean(value: unknown, max = 250) { return String(value ?? '').trim().slice(0, max) }
 function normalizePhone(value: unknown) {
@@ -312,6 +357,10 @@ Deno.serve(async (req)=>{
 
   try {
     const body = await req.json()
+    if(body.action==='cancel-discount-checkout'){
+      await cancelDiscountCheckout(getAdminClient(),clean(body.trackingToken,36))
+      return json(req,{ok:true})
+    }
     const quoteOnly = body.quoteOnly === true
     // Keep already-open checkout pages working while GitHub Pages deploys the new form.
     const legacyClient = !quoteOnly && body.expectedPrice === undefined && body.termsAccepted === undefined
@@ -386,12 +435,14 @@ Deno.serve(async (req)=>{
     }
     if(subtotalCents<50) return json(req,{error:'Bestelbedrag is te laag'},400)
 
-    const {data:matchingCustomers,error:matchingError}=await supabase.from('customers').select('id,order_count').eq('phone_normalized',phoneNormalized)
+    const {data:matchingCustomers,error:matchingError}=await supabase.from('customers').select('id').eq('phone_normalized',phoneNormalized)
     if(matchingError) throw matchingError
-    const priorPaidOrders=(matchingCustomers||[]).reduce((sum:number,c:any)=>sum+Number(c.order_count||0),0)
-    const isWelcomeCustomer=priorPaidOrders===0
-    const discountCents=isWelcomeCustomer?Math.round(subtotalCents*WELCOME_DISCOUNT_PERCENT/100):0
-    const discountCode=discountCents>0?'WELCOME10':null
+    const requestedCode=clean(body.discountCode,40).toUpperCase()
+    const history=requestedCode===RETURN_DISCOUNT_CODE&&subtotalCents>=RETURN_DISCOUNT_MIN_CENTS
+      ?await discountHistory(supabase,phoneNormalized):{completed_count:0,active_discount:null}
+    const discount=checkReturnDiscount(requestedCode,subtotalCents,history)
+    if('error' in discount)return json(req,discount,400)
+    const {discountCents,discountCode}=discount
 
     let deliveryFeeCents=0; let deliveryDistanceKm:number|null=null; let deliveryAddress:string|null=null
     if(orderType==='delivery'){
@@ -428,13 +479,20 @@ Deno.serve(async (req)=>{
       total_cents:totalCents,currency:'eur'
       ,terms_accepted_at:body.termsAccepted===true?new Date().toISOString():null,marketing_consent:body.marketingConsent===true
     }).select('id,order_number,total_cents,tracking_token').single()
-    if(orderError) throw orderError
+    if(orderError){
+      if(orderError.code==='23505'&&orderError.message?.includes('orders_kustivo3_phone_once'))
+        return json(req,{error:'KUSTIVO3 is al gebruikt of gereserveerd voor een openstaande bestelling.',code:'discount_used'},409)
+      throw orderError
+    }
 
     const {error:itemError}=await supabase.from('order_items').insert(checkedItems.map(i=>({order_id:order.id,product_id:i.productId,product_name:i.name,quantity:i.qty,unit_price_cents:i.unitPriceCents,line_total_cents:i.lineTotalCents,selected_options:i.selectedOptions,details:i.details,item_note:i.itemNote})))
-    if(itemError) throw itemError
+    if(itemError){
+      await supabase.from('orders').update({status:'cancelled',payment_status:'failed'}).eq('id',order.id).eq('payment_status','unpaid')
+      throw itemError
+    }
 
     if(paymentMethod==='cash'){
-      return json(req,{ok:true,cashOrder:true,trackingToken:order.tracking_token,orderNumber:order.order_number,requestedTime:finalSlot.requestedTime,subtotalCents,discountCents,discountCode,welcomeDiscountApplied:discountCents>0,deliveryFeeCents,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),totalCents:order.total_cents})
+      return json(req,{ok:true,cashOrder:true,trackingToken:order.tracking_token,orderNumber:order.order_number,requestedTime:finalSlot.requestedTime,subtotalCents,discountCents,discountCode,discountApplied:discountCents>0,deliveryFeeCents,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),totalCents:order.total_cents})
     }
 
     const siteUrl=(Deno.env.get('SITE_URL')||'https://kustivo.be').replace(/\/$/,'').replace(/^https:\/\/(?:www\.)?grilltime\.be$/,'https://kustivo.be')
@@ -442,10 +500,10 @@ Deno.serve(async (req)=>{
       const lineItems:Stripe.Checkout.SessionCreateParams.LineItem[]=checkedItems.map(i=>({quantity:i.qty,price_data:{currency:'eur',unit_amount:i.unitPriceCents,product_data:{name:i.name,description:[...i.details,...(i.itemNote?[`Opmerking: ${i.itemNote}`]:[])].join(' · ').slice(0,450)||undefined}}}))
       if(deliveryFeeCents>0) lineItems.push({quantity:1,price_data:{currency:'eur',unit_amount:deliveryFeeCents,product_data:{name:'Bezorgkosten'}}})
       let discounts:Stripe.Checkout.SessionCreateParams.Discount[]|undefined
-      if(discountCents>0){const coupon=await stripe.coupons.create({amount_off:discountCents,currency:'eur',duration:'once',name:'Welkomstkorting 10%'});discounts=[{coupon:coupon.id}]}
-      const session=await stripe.checkout.sessions.create({mode:'payment',line_items:lineItems,discounts,customer_email:customer.email||undefined,client_reference_id:order.id,success_url:`${siteUrl}/order/?payment=success&session_id={CHECKOUT_SESSION_ID}`,cancel_url:`${siteUrl}/order/?payment=cancelled`,metadata:{order_id:order.id,order_number:String(order.order_number),delivery_fee_cents:String(deliveryFeeCents),delivery_distance_km:deliveryDistanceKm===null?'':deliveryDistanceKm.toFixed(2),discount_code:discountCode||'',discount_cents:String(discountCents)},locale:'nl'})
+      if(discountCents>0){const coupon=await stripe.coupons.create({amount_off:discountCents,currency:'eur',duration:'once',name:'KUSTIVO3 · €3 korting'});discounts=[{coupon:coupon.id}]}
+      const session=await stripe.checkout.sessions.create({mode:'payment',line_items:lineItems,discounts,customer_email:customer.email||undefined,client_reference_id:order.id,success_url:`${siteUrl}/order/?payment=success&session_id={CHECKOUT_SESSION_ID}`,cancel_url:`${siteUrl}/order/?payment=cancelled${discountCode?`&order_token=${order.tracking_token}`:''}`,expires_at:discountCode?Math.floor(Date.now()/1000)+35*60:undefined,metadata:{order_id:order.id,order_number:String(order.order_number),delivery_fee_cents:String(deliveryFeeCents),delivery_distance_km:deliveryDistanceKm===null?'':deliveryDistanceKm.toFixed(2),discount_code:discountCode||'',discount_cents:String(discountCents)},locale:'nl'})
       const {error:updateError}=await supabase.from('orders').update({stripe_checkout_session_id:session.id}).eq('id',order.id);if(updateError)throw updateError
-      return json(req,{ok:true,checkoutUrl:session.url,orderNumber:order.order_number,subtotalCents,discountCents,discountCode,welcomeDiscountApplied:discountCents>0,deliveryFeeCents,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),totalCents:order.total_cents,mode:stripeKey.includes('_test_')?'test':'live'})
+      return json(req,{ok:true,checkoutUrl:session.url,orderNumber:order.order_number,subtotalCents,discountCents,discountCode,discountApplied:discountCents>0,deliveryFeeCents,deliveryDistanceKm:deliveryDistanceKm===null?null:Number(deliveryDistanceKm.toFixed(2)),totalCents:order.total_cents,mode:stripeKey.includes('_test_')?'test':'live'})
     }catch(stripeError){await supabase.from('orders').update({status:'cancelled',payment_status:'failed'}).eq('id',order.id);throw stripeError}
   }catch(error){
     if(error instanceof AddressNotFound)return json(req,{error:error.message,code:'address_not_found',suggestions:error.suggestions},400)
@@ -454,4 +512,5 @@ Deno.serve(async (req)=>{
     return json(req,{error:error instanceof Error?error.message:'Checkout kon niet worden gestart. Probeer opnieuw.'},500)
   }
 })
+
 

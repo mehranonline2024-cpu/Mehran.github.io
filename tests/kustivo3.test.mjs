@@ -27,7 +27,7 @@ function application(options={}) {
         return {data:single?{id:'customer_fixture'}:null,error:null};
       }
       if(this.table==='store_settings')return{data:{timezone:'Europe/Brussels',opens_at:'11:30:00',closes_at:'23:00:00',preparation_lead_minutes:30,preorder_days:7,delivery_paused:false},error:null};
-      if(this.table==='products')return{data:[{id:'fixture_product',name:'Fixture product',category:'Pizza',price_cents:options.price??2500,active:true}],error:null};
+      if(this.table==='order_products')return{data:[{id:'fixture_product',name:'Fixture product',category:'Pizza',price_cents:options.price??2500,active:true}],error:null};
       if(this.table==='customers')return{data:single?{id:'customer_fixture'}:[{id:'customer_fixture'}],error:null};
       if(this.table==='orders'){
         if(this.op==='insert'){

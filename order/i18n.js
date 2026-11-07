@@ -1,5 +1,11 @@
 (() => {
   const en = {
+    "Bici Burger": "Bici Burger",
+    "Dürum Kebab": "Kebab Wrap",
+    "Pita Kebab": "Kebab Pita",
+    "Sappige burger met kaas en frisse sla op een geroosterd broodje.": "Juicy burger with cheese and crisp lettuce in a toasted bun.",
+    "Strak gerolde wrap bomvol mals vlees en verse salade.": "A rolled wrap filled with tender kebab and fresh salad.",
+    "Traditioneel pitabroodje, rijkelijk gevuld met gekruid vlees en verse salade.": "Traditional pita filled with seasoned kebab and fresh salad.",
 "🎁 €3 korting op je tweede bestelling vanaf €25 · KUSTIVO3":"🎁 €3 off your second order of €25 or more · KUSTIVO3",
 "Gebruik hetzelfde telefoonnummer als bij je eerste afgeronde bestelling.":"Use the same phone number as for your first completed order.",
 "Kortingscode":"Discount code",

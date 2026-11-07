@@ -395,7 +395,7 @@ Deno.serve(async (req)=>{
       if(!legacyClient && body.termsAccepted!==true)return json(req,{error:'Bevestig eerst de voorwaarden en het privacybeleid.'},400)
     }
 
-    const {data:products,error:productError}=await supabase.from('products').select('id,name,category,price_cents,active').in('id',productIds).eq('active',true)
+    const {data:products,error:productError}=await supabase.from('order_products').select('id,name,category,price_cents,active').in('id',productIds).eq('active',true)
     if(productError) throw productError
     const productMap=new Map((products||[]).map((p:any)=>[p.id,p]))
     if(productMap.size!==productIds.length) return json(req,{error:'Een product is niet meer beschikbaar'},400)

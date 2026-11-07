@@ -5,7 +5,7 @@ VALUES
   ('winter-bici-burger', 'Grill Time Classics', 'Bici Burger',
    'Sappige burger met kaas en frisse sla op een geroosterd broodje.', 600, '/assets/images/bici-burger.webp', 205),
   ('winter-durum-kebab', 'Grill Time Classics', 'Dürum Kebab',
-   'Strak gerolde wrap bomvol mals vlees en verse salade.', 1000, '../Wrap.jfif', 206),
+   'Strak gerolde wrap bomvol mals vlees en verse salade.', 1000, '/assets/images/durum-kebab.webp', 206),
   ('winter-pita-kebab', 'Grill Time Classics', 'Pita Kebab',
    'Traditioneel pitabroodje, rijkelijk gevuld met gekruid vlees en verse salade.', 1000, '/assets/images/pita-kebab.webp', 207);
 
@@ -15,8 +15,11 @@ FROM (VALUES ('winter-durum-kebab', 'durum'), ('winter-pita-kebab', 'pita')) AS 
 JOIN public.product_option_groups AS options ON options.product_id = offers.base_id
 WHERE options.group_id IN ('sauces', 'vegetables');
 
+-- The Dürüm Kebab replaces the previous Wrap / Durum listing.
+UPDATE public.products SET active = false WHERE id = 'durum';
+
 -- Menu and checkout use the same effective prices. Base prices stay on products.
--- The three flyer-only items are available through 25 November in Belgium.
+-- The flyer-only Bici Burger and Pita Kebab are available through 25 November in Belgium.
 CREATE VIEW public.order_products WITH (security_invoker = true) AS
 WITH campaign AS (
   SELECT TIMESTAMPTZ '2026-11-26 00:00:00 Europe/Brussels' AS ends_at
@@ -49,7 +52,7 @@ CROSS JOIN LATERAL (
 ) AS offer
 WHERE p.active AND p.availability_status <> 'hidden'
   AND (CURRENT_TIMESTAMP < campaign.ends_at OR p.id NOT IN
-    ('winter-bici-burger', 'winter-durum-kebab', 'winter-pita-kebab'));
+    ('winter-bici-burger', 'winter-pita-kebab'));
 
 REVOKE ALL ON public.order_products FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.order_products TO anon, authenticated, service_role;

@@ -3,11 +3,11 @@ INSERT INTO public.products
   (id, category, name, description, price_cents, image_path, sort_order)
 VALUES
   ('winter-bici-burger', 'Grill Time Classics', 'Bici Burger',
-   'Sappige burger met kaas en frisse sla op een geroosterd broodje.', 600, '', 205),
+   'Sappige burger met kaas en frisse sla op een geroosterd broodje.', 600, '/assets/images/bici-burger.webp', 205),
   ('winter-durum-kebab', 'Grill Time Classics', 'Dürum Kebab',
    'Strak gerolde wrap bomvol mals vlees en verse salade.', 1000, '../Wrap.jfif', 206),
   ('winter-pita-kebab', 'Grill Time Classics', 'Pita Kebab',
-   'Traditioneel pitabroodje, rijkelijk gevuld met gekruid vlees en verse salade.', 1000, '', 207);
+   'Traditioneel pitabroodje, rijkelijk gevuld met gekruid vlees en verse salade.', 1000, '/assets/images/pita-kebab.webp', 207);
 
 INSERT INTO public.product_option_groups (product_id, group_id, sort_order)
 SELECT offers.id, options.group_id, options.sort_order
@@ -38,6 +38,11 @@ CROSS JOIN LATERAL (
       WHEN 'winter-bici-burger' THEN 400
       WHEN 'winter-durum-kebab' THEN 700
       WHEN 'winter-pita-kebab' THEN 700
+      WHEN 'frikandel' THEN 290
+      WHEN 'nuggets' THEN 390
+      WHEN 'fries' THEN 390
+      WHEN 'wings' THEN 350
+      WHEN 'loaded-fries' THEN 550
       ELSE CASE WHEN p.price_cents > 200 THEN p.price_cents - 200 END
     END
   END AS price_cents

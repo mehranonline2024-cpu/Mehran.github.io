@@ -106,6 +106,6 @@ await test('frontend preserves code and sends it for server-side quotation',asyn
   class Form {get(k){return fields[k]??null;}has(k){return Boolean(fields[k]);}}
   const context=vm.createContext({FormData:Form,document:{getElementById:()=>({})},orderType:'pickup',paymentMethod:'online',cart:[],checkoutDraft:{}});
   vm.runInContext(html.split('\n').find(l=>l.startsWith('function captureCheckoutDraft('))+'\n'+html.split('\n').find(l=>l.startsWith('function payload(')),context);
-  vm.runInContext('captureCheckoutDraft()',context);assert.equal(context.checkoutDraft.discountCode,' kustivo3 ');assert.equal(vm.runInContext('payload()',context).discountCode,'KUSTIVO3');assert(html.includes('name="discountCode"'));assert(html.includes('aria-describedby="discountCodeHint"'));assert(!/10%|WELCOME10|[Ww]elkomstkorting/.test(html));
+  vm.runInContext('captureCheckoutDraft()',context);assert.equal(context.checkoutDraft.discountCode,' kustivo3 ');assert.equal(vm.runInContext('payload()',context).discountCode,'KUSTIVO3');assert(html.includes('name="discountCode"'));assert(html.includes('<label for="discountCodeInput">Kortingscode'));assert(!/10%|WELCOME10|[Ww]elkomstkorting/.test(html));
 });
 console.log(`${tests} coupon checkout checks passed; no live network requests or payments.`);

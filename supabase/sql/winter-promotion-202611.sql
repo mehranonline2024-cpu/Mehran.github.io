@@ -5,7 +5,7 @@ VALUES
   ('winter-bici-burger', 'Grill Time Classics', 'Bici Burger',
    'Sappige burger met kaas en frisse sla op een geroosterd broodje.', 600, '/assets/images/bici-burger.webp', 205),
   ('winter-durum-kebab', 'Grill Time Classics', 'Dürum Kebab',
-   'Strak gerolde wrap bomvol mals vlees en verse salade.', 1000, '/assets/images/durum-kebab.webp', 206),
+   'Strak gerolde wrap bomvol mals vlees en verse salade.', 1000, '/assets/images/durum-kebab-plate.webp', 206),
   ('winter-pita-kebab', 'Grill Time Classics', 'Pita Kebab',
    'Traditioneel pitabroodje, rijkelijk gevuld met gekruid vlees en verse salade.', 1000, '/assets/images/pita-kebab.webp', 207);
 
@@ -35,6 +35,7 @@ CROSS JOIN campaign
 CROSS JOIN LATERAL (
   SELECT CASE WHEN CURRENT_TIMESTAMP < campaign.ends_at AND p.category <> 'Drinks' THEN
     CASE p.id
+      WHEN 'pizza-menu' THEN NULL
       WHEN 'margherita' THEN 890
       WHEN 'pepperoni' THEN 1090
       WHEN 'loaded-doner-pizza' THEN 1190

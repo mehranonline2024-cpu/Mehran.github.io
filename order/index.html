@@ -7,7 +7,8 @@
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://qpaycwrhohunpfjqmlga.supabase.co; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'self'">
-<title>Bestel online | Kustivo</title>
+<title>Pizza en snacks bestellen in Oostende | Kustivo</title>
+<meta name="description" content="Bestel pizza, dürüm en snacks bij Kustivo in Oostende. Haal je bestelling af of laat ze thuis bezorgen.">
 <link rel="preconnect" href="https://qpaycwrhohunpfjqmlga.supabase.co" crossorigin>
 <style>
 :root{--bg:#0b0b0b;--panel:#171717;--panel2:#1c1a17;--cream:#f5efe4;--soft:#d7cdbc;--gold:#f5b44b;--gold2:#ffd177;--muted:#aaa398;--line:#2d2923;--green:#55d88b;--red:#ff8b8b;--shadow:0 16px 45px rgba(0,0,0,.25)}
@@ -33,7 +34,7 @@ main{max-width:1120px;margin:auto;padding:8px 18px 42px}.section-title{display:f
 </style>
 </head>
 <body>
-<header class="top"><div class="top-inner"><div class="brand"><div class="logo">K</div><div><h1>Kustivo</h1><small>Bestel direct bij ons</small></div></div><div style="display:flex;align-items:center;gap:8px"><button id="languageToggle" class="lang-toggle" type="button" onclick="gtSetLanguage(gtIsEnglish()?'nl':'en')" aria-label="Switch to English">EN</button><div id="status" class="status">● Laden…</div></div></div></header>
+<header class="top"><div class="top-inner"><div class="brand"><div class="logo">K</div><div><h1>Kustivo</h1><small>Pizza en snacks in Oostende</small></div></div><div style="display:flex;align-items:center;gap:8px"><button id="languageToggle" class="lang-toggle" type="button" onclick="gtSetLanguage(gtIsEnglish()?'nl':'en')" aria-label="Switch to English">EN</button><div id="status" class="status">● Laden…</div></div></div></header>
 <div class="order-intro"><p>Afhalen of bezorgen, online of cash betalen.</p><p id="winterOffer" class="winter-offer" hidden></p></div>
 <section class="delivery-rules"><div class="delivery-strip"><div class="rules-box" id="deliveryRules" role="region" aria-labelledby="deliveryRulesLabel" tabindex="0"><div class="rules-loop"><div class="rules-track"><span class="rule rule-main" id="deliveryRulesLabel">🛵 Bezorging</span><span class="rule"><strong>Min. €15 eten</strong></span><span class="rule"><strong>€2,99</strong> tot 2,5 km</span><span class="rule"><strong>€3,99</strong> 2,5–4 km</span><span class="rule">alleen Oostende · max. 4 km rijafstand</span><span class="rule">Dagelijks 11:30–23:00 · vooruitbestellen mogelijk</span></div></div></div><button id="deliveryRulesToggle" class="lang-toggle rules-toggle" type="button" aria-label="Bezorgstrook automatisch bewegen" aria-controls="deliveryRules" aria-pressed="false" hidden><span aria-hidden="true">▶</span></button></div></section>
 <section class="controls"><div class="search-wrap"><span class="search-icon">⌕</span><input id="search" class="search" type="search" placeholder="Waar heb je zin in? Pizza, kapsalon, durum…" autocomplete="off"></div><div id="categories" class="cats"></div></section>
@@ -42,7 +43,7 @@ main{max-width:1120px;margin:auto;padding:8px 18px 42px}.section-title{display:f
 <footer class="site-footer"><nav><a href="/order/privacy.html">Privacy</a><a href="/order/voorwaarden.html">Voorwaarden</a><a href="/order/allergenen.html">Allergenen</a><a href="https://search.google.com/local/writereview?placeid=ChIJOUHpWQCp3EcR7-XFnqo-UyY" target="_blank" rel="noopener">Beoordeel Kustivo op Google</a></nav><p>Kustivo · Albert I-promenade 9 · 8400 Oostende · BE0724799044 · <a href="tel:+32490396181">0490 39 61 81</a></p></footer><div class="cartbar"><button id="openCart" class="cartbtn" type="button"><span class="cart-copy"><span id="cartCount" class="badge">0</span><span>Winkelmandje<small>Bekijk bestelling</small></span></span><span id="cartTotal">€0,00</span></button></div>
 <div id="productOverlay" class="overlay"><div id="productSheet" class="sheet"></div></div><div id="cartOverlay" class="overlay"><div id="cartSheet" class="sheet"></div></div><div id="checkoutOverlay" class="overlay"><div id="checkoutSheet" class="sheet"></div></div><div id="successOverlay" class="overlay"><div id="successSheet" class="sheet"></div></div><div id="toast" class="toast"></div>
 <script src="../assets/allergens.js?v=20261015-1"></script>
-<script src="./i18n.js?v=20261108-2"></script>
+<script src="./i18n.js?v=20261108-3"></script>
 <script src="./deals.js?v=20261014-1"></script>
 <script src="./address.js?v=20261011-1"></script>
 <script>

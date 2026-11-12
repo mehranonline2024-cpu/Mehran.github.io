@@ -435,7 +435,7 @@ Deno.serve(async (req)=>{
     }
     if(subtotalCents<50) return json(req,{error:'Bestelbedrag is te laag'},400)
 
-    const {data:matchingCustomers,error:matchingError}=await supabase.from('customers').select('id').eq('phone_normalized',phoneNormalized)
+    const {data:matchingCustomers,error:matchingError}=await supabase.from('customers').select('id,phone').eq('phone_normalized',phoneNormalized)
     if(matchingError) throw matchingError
     const requestedCode=clean(body.discountCode,40).toUpperCase()
     const history=requestedCode===RETURN_DISCOUNT_CODE&&subtotalCents>=RETURN_DISCOUNT_MIN_CENTS
@@ -466,9 +466,11 @@ Deno.serve(async (req)=>{
     const expected=body.expectedPrice
     if(!legacyClient && (!expected||!Object.entries(priceBreakdown).every(([key,value])=>expected[key]===value)))return json(req,{error:'Het totaal is gewijzigd. Controleer de nieuwe prijs voordat je bestelt.',code:'price_changed'},409)
 
-    let customerId:string; const existingCustomer=(matchingCustomers||[])[0] as any
-    if(existingCustomer?.id){const {data:updated,error}=await supabase.from('customers').update({name:customer.name,phone:customer.phone,email:customer.email,phone_normalized:phoneNormalized}).eq('id',existingCustomer.id).select('id').single();if(error)throw error;customerId=updated.id}
-    else {const {data:inserted,error}=await supabase.from('customers').insert({name:customer.name,phone:customer.phone,email:customer.email,phone_normalized:phoneNormalized}).select('id').single();if(error)throw error;customerId=inserted.id}
+    // Legacy records can contain the same normalized number in different formats.
+    // Prefer the exact spelling and preserve existing phone keys and order history.
+    let customerId:string; const existingCustomer=(matchingCustomers||[]).find((c:any)=>c.phone===customer.phone)||(matchingCustomers||[])[0] as any
+    if(existingCustomer?.id){const {data:updated,error}=await supabase.from('customers').update({name:customer.name,email:customer.email,phone_normalized:phoneNormalized}).eq('id',existingCustomer.id).select('id').single();if(error)throw error;customerId=updated.id}
+    else {const {data:inserted,error}=await supabase.from('customers').upsert({name:customer.name,phone:customer.phone,email:customer.email,phone_normalized:phoneNormalized},{onConflict:'phone'}).select('id').single();if(error)throw error;customerId=inserted.id}
 
     const {data:order,error:orderError}=await supabase.from('orders').insert({
       customer_id:customerId,customer_name:customer.name,customer_phone:customer.phone,customer_email:customer.email,

@@ -9,7 +9,7 @@ const fixedNow = new Date('2026-11-07T08:00:00Z');
 class Clock extends Date { constructor(...args){super(...(args.length?args:[fixedNow]));} static now(){return +fixedNow;} }
 
 function application(options={}) {
-  const calls={orders:[],updates:[],coupons:[],sessions:[],expired:[],history:[],items:[]};
+  const calls={orders:[],updates:[],coupons:[],sessions:[],expired:[],history:[],items:[],customerUpserts:[]};
   let active=options.active??null, handler;
   const session={id:'cs_test_fixture',status:options.sessionStatus??'open',payment_status:'unpaid',...options.session};
   const stripe={coupons:{create:async p=>{calls.coupons.push(p);return{id:'coupon_fixture'};}},checkout:{sessions:{
@@ -20,15 +20,17 @@ function application(options={}) {
     constructor(table){this.table=table;this.op='select';this.filters={};}
     select(){return this;} eq(k,v){this.filters[k]=v;return this;} in(){return this;} gte(){return this;}
     insert(data){this.op='insert';this.data=data;return this;} update(data){this.op='update';this.data=data;return this;}
+    upsert(data,options){assert.equal(this.table,'customers');assert.equal(options.onConflict,'phone');calls.customerUpserts.push(data);this.op='upsert';this.data=data;return this;}
     async result(single=false){
       if(this.op==='update'){
         calls.updates.push({table:this.table,data:this.data,filters:this.filters});
         if(this.table==='orders'&&this.data.status==='cancelled')active=null;
-        return {data:single?{id:'customer_fixture'}:null,error:null};
+        if(this.table==='customers'&&options.duplicatePhones&&this.data.phone)return{data:null,error:{code:'23505',message:'duplicate key violates unique constraint "customers_phone_key"'}};
+        return {data:single?{id:this.filters.id||'customer_fixture'}:null,error:null};
       }
       if(this.table==='store_settings')return{data:{timezone:'Europe/Brussels',opens_at:'11:30:00',closes_at:'23:00:00',preparation_lead_minutes:30,preorder_days:7,delivery_paused:false},error:null};
       if(this.table==='order_products')return{data:[{id:'fixture_product',name:'Fixture product',category:'Pizza',price_cents:options.price??2500,active:true}],error:null};
-      if(this.table==='customers')return{data:single?{id:'customer_fixture'}:[{id:'customer_fixture'}],error:null};
+      if(this.table==='customers')return{data:single?{id:'customer_fixture'}:(options.customers??[{id:'customer_fixture'}]),error:null};
       if(this.table==='orders'){
         if(this.op==='insert'){
           calls.orders.push(this.data);
@@ -83,6 +85,22 @@ await test('coupon checks fail closed if history cannot be read',async()=>{asser
 const expected={subtotalCents:2500,discountCents:300,discountCode:'KUSTIVO3',deliveryFeeCents:0,totalCents:2200};
 await test('cash checkout stores the fixed discount and correct total',async()=>{
   const app=application();const r=await app.request({quoteOnly:false,termsAccepted:true,expectedPrice:expected});assert.equal(r.status,200);assert(r.body.cashOrder);assert.equal(app.calls.orders[0].discount_code,'KUSTIVO3');assert.equal(app.calls.orders[0].discount_cents,300);assert.equal(app.calls.orders[0].total_cents,2200);assert.equal(app.calls.coupons.length,0);
+});
+await test('duplicate normalized phone records prefer the exact phone without overwriting unique phone keys',async()=>{
+  const customers=[{id:'international',phone:'+32490396181'},{id:'local',phone:'0490396181'}];
+  const app=application({customers,duplicatePhones:true,phone:'0490396181'});
+  const r=await app.request({quoteOnly:false,termsAccepted:true,expectedPrice:expected});
+  assert.equal(r.status,200);assert(r.body.cashOrder);assert.equal(app.calls.orders[0].customer_id,'local');
+  const update=app.calls.updates.find(u=>u.table==='customers');assert.equal(update.filters.id,'local');assert.equal(update.data.phone_normalized,'0490396181');assert.equal(update.data.phone,undefined);
+});
+await test('a formatted returning phone reuses its customer without a unique-key collision',async()=>{
+  const app=application({customers:[{id:'local',phone:'0490396181'}],duplicatePhones:true,phone:'+32 490 39 61 81'});
+  const r=await app.request({quoteOnly:false,termsAccepted:true,expectedPrice:expected});
+  assert.equal(r.status,200);assert.equal(app.calls.orders[0].customer_id,'local');assert.equal(app.calls.orders[0].customer_phone,'+32 490 39 61 81');assert.equal(app.calls.customerUpserts.length,0);
+});
+await test('a new or concurrently registered phone uses conflict-safe customer storage',async()=>{
+  const app=application({customers:[]});const r=await app.request({quoteOnly:false,termsAccepted:true,expectedPrice:expected});
+  assert.equal(r.status,200);assert.equal(app.calls.customerUpserts.length,1);assert.equal(app.calls.customerUpserts[0].phone_normalized,'0490396181');assert.equal(app.calls.orders.length,1);
 });
 await test('online checkout applies fixed EUR coupon and safe cancellation URL',async()=>{
   const app=application();const r=await app.request({quoteOnly:false,termsAccepted:true,paymentMethod:'online',expectedPrice:expected});assert.equal(r.status,200);assert.equal(app.calls.coupons[0].amount_off,300);assert.equal(app.calls.coupons[0].currency,'eur');assert.equal(app.calls.coupons[0].duration,'once');

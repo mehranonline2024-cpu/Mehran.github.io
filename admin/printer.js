@@ -40,10 +40,10 @@
     const notes = payload.notes ? `<section class="notice"><b>OPMERKING BESTELLING</b><br>${escapeHtml(payload.notes)}</section>` : '';
     const printedAt = new Date().toLocaleString('nl-BE', { dateStyle: 'short', timeStyle: 'short' });
 
-    return `<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Grill Time bon ${orderNumber}</title><style>
+    return `<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kustivo bon ${orderNumber}</title><style>
       @page{size:80mm auto;margin:3mm}*{box-sizing:border-box}html,body{width:74mm;margin:0;padding:0;color:#000;background:#fff;font-family:Arial,sans-serif;font-size:10pt}body{padding:1mm}.center{text-align:center}.brand{font-size:15pt;font-weight:900;letter-spacing:.4px}.subtitle{font-size:9pt;margin-top:2px}.rule{border:0;border-top:1px dashed #000;margin:8px 0}.meta{display:grid;grid-template-columns:1fr 1fr;gap:5px 8px;margin:7px 0}.meta b,.contact b{font-size:8pt}.contact{display:grid;gap:7px;margin:7px 0}.item{padding:6px 0;border-bottom:1px dotted #777}.itemtop{display:flex;justify-content:space-between;gap:6px}.itemtop strong{flex:1}.detail,.note{font-size:9pt;margin:3px 0 0 12px;line-height:1.35}.note,.notice{font-weight:600}.notice{border:1px solid #000;padding:6px;margin-top:8px;line-height:1.4}.total{display:flex;justify-content:space-between;font-weight:900;font-size:13pt;margin-top:8px}.foot{font-size:8pt;text-align:center;margin-top:12px}
     </style></head><body>
-      <header class="center"><div class="brand">GRILL TIME</div><div class="subtitle">${test ? 'PRINTERTEST' : 'KEUKENBON'}</div></header>
+      <header class="center"><div class="brand">KUSTIVO</div><div class="subtitle">${test ? 'PRINTERTEST' : 'KEUKENBON'}</div></header>
       <hr class="rule"><div class="meta"><div><b>BESTELNUMMER</b><br>GT-${escapeHtml(orderNumber)}</div><div><b>${type}</b><br>${escapeHtml(requestedTime)}</div></div>
       <div class="subtitle">Afgedrukt: ${escapeHtml(printedAt)}</div><hr class="rule">
       ${customer || address || phone ? `<section class="contact">${customer}${address}${phone}</section><hr class="rule">` : ''}
@@ -53,7 +53,7 @@
       ${Number(payload.discount_cents) > 0 ? `<div class="itemtop"><span>Korting</span><span>− ${money(payload.discount_cents)}</span></div>` : ''}
       ${isDelivery && payload.delivery_fee_cents != null ? `<div class="itemtop"><span>Bezorging</span><span>${money(payload.delivery_fee_cents)}</span></div>` : ''}
       ${payload.total_cents == null ? '' : `<div class="total"><span>TOTAAL</span><span>${money(payload.total_cents)}</span></div>`}
-      <div class="foot">Grill Time · Oostende</div>
+      <div class="foot">Kustivo · Oostende</div>
     </body></html>`;
   }
 

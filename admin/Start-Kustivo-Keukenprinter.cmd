@@ -27,7 +27,9 @@ if not exist "%KUSTIVO_PRINT_PROFILE%\Default" (
 )
 rem Seed only a new profile; never overwrite an existing browser profile.
 rem This profile follows the default printer configured in Windows.
-if not exist "%KUSTIVO_PRINT_PROFILE%\Default\Preferences" > "%KUSTIVO_PRINT_PROFILE%\Default\Preferences" echo {"printing":{"use_system_default_printer":true}}
+if not exist "%KUSTIVO_PRINT_PROFILE%\Default\Preferences" (
+  > "%KUSTIVO_PRINT_PROFILE%\Default\Preferences" echo {"printing":{"use_system_default_printer":true}}
+)
 
 echo Kustivo wordt geopend voor automatisch keukenprinten.
 echo Meld je aan en druk een testbon af. Bevestig dat die uit de keukenprinter kwam.

@@ -18,11 +18,13 @@ async function run(action,options={}){
  const ctx=vm.createContext({Request,Response,URL,atob,console:{error(){}},createClient:()=>db,Stripe:class{constructor(){this.refunds={create:refund,retrieve:refund};this.checkout={sessions:{retrieve:async()=>({payment_intent:'pi_mock'})}}}},Deno:{env:{get:key=>({SUPABASE_URL:'https://mock.test',SUPABASE_SERVICE_ROLE_KEY:'mock',STRIPE_SECRET_KEY:'mock'})[key]},serve:fn=>handler=fn}});
  vm.runInContext(source,ctx);
  const token='x.'+Buffer.from(JSON.stringify({aal:options.aal||'aal2'})).toString('base64url')+'.x';
- const r=await handler(new Request('https://mock.test',{method:'POST',headers:{authorization:'Bearer '+token,origin:'https://grilltime.be','content-type':'application/json'},body:JSON.stringify({orderId:id,action,phoneConfirmed})}));
+ const r=await handler(new Request('https://mock.test',{method:'POST',headers:{authorization:'Bearer '+token,origin:options.origin||'https://kustivo.be','content-type':'application/json'},body:JSON.stringify({orderId:id,action,phoneConfirmed})}));
  return{status:r.status,body:await r.json(),order,updates,refundCalls};
 }
 (async()=>{
  assert.equal((await run('accept')).order.status,'accepted');
+ assert.equal((await run('accept',{origin:'https://www.kustivo.be'})).status,200);
+ assert.equal((await run('accept',{origin:'https://untrusted.example'})).status,403);
  for(const settings of [{aal:'aal1'},{unauthorized:true}]){const r=await run('accept',settings);assert.equal(r.status,401);assert.equal(r.updates,0);}
  const unpaid=await run('accept',{order:{payment_method:'online'}});assert.equal(unpaid.status,409);assert.equal(unpaid.updates,0);
  const race=await run('accept',{race:true});assert.equal(race.status,500);assert.equal(race.updates,0);
@@ -47,7 +49,7 @@ async function run(action,options={}){
  assert.deepEqual(Array.from(filters.ordersForFilter('active',rows),x=>x.status+':'+x.payment_method),['new:cash','preparing:online']);
  assert.deepEqual(Array.from(filters.ordersForFilter('history',rows),x=>x.status+':'+x.payment_method),['completed:online','rejected:cash']);
  for(const filter of filters.filterList().map(f=>f.id))assert.equal(filters.ordersForFilter(filter,rows).some(filters.isOnlineUnpaid),false,`online unpaid order leaked into ${filter}`);
- const code=html.slice(html.indexOf('const busyOrderIds='),html.indexOf('async function runOrderAction('));const c=vm.createContext({});vm.runInContext(code,c);
+ const code=html.slice(html.indexOf('const busyOrderIds='),html.indexOf('async function runOrderAction('));const c=vm.createContext({historyBusy:false,canHideOrder:filters.canHideOrder});vm.runInContext(code,c);
  assert.match(c.orderActionHtml({id,status:'new',payment_method:'cash',payment_status:'unpaid'}),/Accepteren/);
  assert.doesNotMatch(c.orderActionHtml({id,status:'new',payment_method:'online',payment_status:'unpaid'}),/onclick/);
  assert.match(c.orderActionHtml({id,status:'rejected',payment_method:'online',payment_status:'paid'}),/Terugbetaling controleren/);

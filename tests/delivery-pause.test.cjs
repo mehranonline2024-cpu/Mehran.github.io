@@ -38,6 +38,7 @@ async function admin(){
  aal='aal2';await c.loadDeliverySettings();fail=true;await c.toggleDeliveryPause();assert.equal(paused,false);assert.equal(elements.deliveryPauseBtn.disabled,true);assert.match(elements.deliverySettingsError.textContent,/Niet opgeslagen/);
 }
 (async()=>{
+ if(process.argv.includes('--admin-only')){await admin();console.log('PASS: admin pause/resume, summary state, MFA and save-error handling.');return;}
  for(const paused of [false,true]){const r=await checkout({get:true,paused:[paused]});assert.equal(r.status,200);assert.deepEqual(r.body,{deliveryPaused:paused,settings:{timezone:'Europe/Brussels',opensAt:'12:00',closesAt:'23:00',preorderDays:7,preparationLeadMinutes:30,deliveryEstimateMin:25,deliveryEstimateMax:45}});assert.equal(r.writes.length,0);}
  assert.equal((await checkout({get:true,statusError:true})).status,503);
  for(const payment of ['cash','online']){const r=await checkout({paused:[true],payment});assert.equal(r.status,409);assert.equal(r.body.code,'delivery_paused');assert.equal(r.body.pickupAvailable,true);assert.equal(r.writes.length,0);assert.equal(r.stripeCalls,0);}

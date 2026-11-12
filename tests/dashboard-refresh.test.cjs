@@ -7,7 +7,8 @@ const filterCode=html.slice(html.indexOf('function filterList()'),html.indexOf('
 
 function setup(){
  const writes={},panels={},timers=new Map();let nextTimer=1,readCount=0,error=null,heldResolve=null,hold=false;
- for(const id of ['stats','filters','orders']){let value='';writes[id]=0;panels[id]={get innerHTML(){return value},set innerHTML(s){value=s;writes[id]++}};}
+ for(const id of ['stats','filters','orders','historyTools']){let value='';writes[id]=0;panels[id]={get innerHTML(){return value},set innerHTML(s){value=s;writes[id]++}};}
+ panels.historyMessage={textContent:''};
  const order={id:'order',status:'new',payment_method:'cash',payment_status:'unpaid',created_at:new Date().toISOString(),total_cents:2198};
  const context=vm.createContext({Date,Map,Set,orders:[],currentFilter:'active',loadInFlight:false,
   document:{getElementById:id=>panels[id]},euroCents:n=>String(n),
@@ -22,10 +23,10 @@ function setup(){
 
 test('Unchanged polling preserves order buttons; status and filter changes still repaint',async()=>{
  const s=setup();await s.context.loadOrders();
- assert.deepEqual(s.writes,{stats:1,filters:1,orders:1});
- await s.context.loadOrders();assert.deepEqual(s.writes,{stats:1,filters:1,orders:1});
+ assert.deepEqual(s.writes,{stats:1,filters:1,orders:1,historyTools:1});
+ await s.context.loadOrders();assert.deepEqual(s.writes,{stats:1,filters:1,orders:1,historyTools:1});
  s.order.status='accepted';await s.context.loadOrders();assert.equal(s.writes.orders,2);
- s.context.setFilter('history');assert.equal(s.writes.filters,2);assert.equal(s.writes.orders,3);
+ s.context.setFilter('history');assert.equal(s.writes.filters,3);assert.equal(s.writes.orders,3);
 });
 
 test('A load error can recover even when the restored orders have not changed',async()=>{

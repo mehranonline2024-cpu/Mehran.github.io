@@ -4,6 +4,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
 const stripeKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim()
 const stripe = new Stripe(stripeKey)
 const allowedOrigins = new Set([
+  'https://kustivo.be', 'https://www.kustivo.be',
   'https://grilltime.be', 'https://www.grilltime.be',
   'https://grilltime-v2-test.snug-bud-2681.chatgpt.site',
   'https://grilltime-v2-test.mehran-belgie.chatgpt.site',
@@ -12,7 +13,7 @@ const allowedOrigins = new Set([
 function cors(req: Request) {
   const origin = req.headers.get('origin') || ''
   return {
-    'Access-Control-Allow-Origin': allowedOrigins.has(origin) ? origin : 'https://grilltime.be',
+    'Access-Control-Allow-Origin': allowedOrigins.has(origin) ? origin : 'https://kustivo.be',
     'Vary': 'Origin', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
     'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Cache-Control': 'no-store',
   }

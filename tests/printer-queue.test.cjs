@@ -9,6 +9,7 @@ function client(job){return {from(){
 }};}
 function station(job,print){
   const ctx=vm.createContext({sb:client(job),printerStationEnabled:true,printerPollBusy:false,printerRecoveryLastCheck:Date.now(),GTPrinter:{printReceipt:print},renderPrinterStation(){},setPrinterMessage(){},loadFailedPrinterJob:async()=>{},failedPrinterJob:null,document:{getElementById:()=>({classList:{add(){}}})},Date});
+  ctx.backlogReads=0;ctx.stopPrinterStation=()=>{ctx.printerStationEnabled=false};ctx.loadPrinterBacklog=async()=>{ctx.backlogReads++};
   vm.runInContext(queueCode,ctx);return ctx;
 }
 (async()=>{
@@ -24,5 +25,11 @@ function station(job,print){
   const stale={id:'stale',status:'queued',attempts:0,payload:{}};
   await station(stale,async()=>{stale.attempts=2;stale.status='printing'}).pollPrinterQueue();
   assert.equal(stale.status,'printing','an old attempt cannot complete a newer print attempt');
+  const old={id:'old',status:'queued',attempts:0,created_at:new Date(Date.now()-25*60*60*1000).toISOString(),payload:{}};
+  let oldPrints=0;const guarded=station(old,async()=>oldPrints++);await guarded.pollPrinterQueue();
+  assert.equal(old.status,'queued');assert.equal(oldPrints,0);assert.equal(guarded.printerStationEnabled,false);assert.equal(guarded.backlogReads,1);
+  await guarded.pollPrinterQueue(true,'old');assert.equal(oldPrints,1,'a specifically requested reprint is still possible');
+  const recent={id:'recent',status:'queued',attempts:0,created_at:new Date().toISOString(),payload:{}};
+  let freshPrints=0;await station(recent,async()=>freshPrints++).pollPrinterQueue();assert.equal(freshPrints,1);assert.equal(recent.status,'printed');
   console.log('Printer queue concurrency, failure and attempt-isolation tests passed');
 })().catch(e=>{console.error(e);process.exitCode=1});

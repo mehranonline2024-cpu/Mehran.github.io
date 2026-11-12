@@ -22,7 +22,7 @@
 <div id="dashboardView" class="wrap hidden">
   <header class="head"><div><h1>Kustivo · Bestellingen</h1><small id="subtitle">Live overzicht</small></div><div class="actions"><span class="live"><span class="dot"></span> Live</span><button id="soundBtn" class="btn sound-off" type="button" onclick="toggleSound()">🔔 Geluid aan</button><button class="btn dark" type="button" onclick="loadOrders()">↻ Vernieuwen</button><button id="logoutBtn" class="btn dark">Uitloggen</button></div></header>
   <div class="system-bar"><span id="deliverySummary" class="system-state">Bezorgstatus laden…</span><span id="printerSummary" class="system-state warn">Keukenprinter uit</span><button class="btn dark" type="button" onclick="openPrinterSettings()">Printer instellen</button></div>
-  <details id="operationsSettings" class="settings-panel"><summary>Instellingen · bezorging, printer en allergenen</summary><div class="settings-body"><section class="msg ok" id="deliveryControls" aria-label="Bezorging beheren"><div class="actions"><strong id="deliveryState" role="status">Bezorgstatus laden…</strong><button id="deliveryPauseBtn" class="btn gold" type="button" onclick="toggleDeliveryPause()" disabled>Leveringen pauzeren</button></div><div style="margin-top:8px;font-size:13px">Afhalen en bestaande bestellingen blijven actief.</div><div id="deliverySettingsError" role="alert"></div></section><section class="msg warn" id="printerControls" aria-label="Keukenprinter beheren"><div class="actions"><strong id="printerState" role="status">Printstation uit op deze laptop</strong><button id="printerToggleBtn" class="btn dark" type="button" onclick="togglePrinterStation()">Printstation starten</button><button id="printerTestBtn" class="btn dark" type="button" onclick="printPrinterTest()">Testbon afdrukken</button></div><p class="printer-help">Na accepteren gaat de bon naar het actieve keukenprintstation. <a href="./Kustivo-keukenprinter.zip" download style="color:#ffd177">Download het keukenstartbestand voor Windows</a>, pak het uit en open <strong>Start-Kustivo-Keukenprinter.cmd</strong>. Bevestig daarna één testbon en laat het keukenvenster open.</p><details class="printer-help"><summary>Printer aansluiten</summary><p>Keukenprinter: 192.168.1.100:9100. Stel deze in Windows in als standaardprinter. Automatisch afdrukken zonder afdrukvenster werkt met Chrome in kiosk-printmodus.</p></details><div id="printerBacklogBox" class="msg warn hidden"><strong id="printerBacklogText"></strong><p>Controleer deze oude bonnen vóór je het printstation start.</p><button id="printerSkipOldBtn" class="btn dark" type="button" onclick="skipOldPrinterJobs()">Oude bonnen overslaan</button></div><div id="printerMessage" role="status" style="margin-top:8px"></div><div id="printerFailedBox" class="msg bad hidden"><span id="printerFailedMessage"></span> <button class="btn dark" type="button" onclick="retryFailedPrinterJob()">Bon opnieuw aanbieden</button> <button class="btn dark" type="button" onclick="confirmRecoveredPrinterJob()">Bon is al afgedrukt</button></div></section><details id="allergenManager" class="msg" style="border:1px solid #444"><summary style="cursor:pointer;font-weight:800">Allergenen beheren</summary><div id="allergenManagerBody"></div></details></div></details>
+  <details id="operationsSettings" class="settings-panel"><summary>Instellingen · bezorging, printer en allergenen</summary><div class="settings-body"><section class="msg ok" id="deliveryControls" aria-label="Bezorging beheren"><div class="actions"><strong id="deliveryState" role="status">Bezorgstatus laden…</strong><button id="deliveryPauseBtn" class="btn gold" type="button" onclick="toggleDeliveryPause()" disabled>Leveringen pauzeren</button></div><div style="margin-top:8px;font-size:13px">Afhalen en bestaande bestellingen blijven actief.</div><div id="deliverySettingsError" role="alert"></div></section><section class="msg warn" id="printerControls" aria-label="Keukenprinter beheren"><div class="actions"><strong id="printerState" role="status">Printstation uit op deze laptop</strong><button id="printerToggleBtn" class="btn dark" type="button" onclick="togglePrinterStation()">Printstation starten</button><button id="printerTestBtn" class="btn dark" type="button" onclick="printPrinterTest()">Testbon afdrukken</button></div><p class="printer-help">Na accepteren gaat de bon naar het actieve keukenprintstation. <a href="./Kustivo-keukenprinter.zip" download style="color:#ffd177">Download het keukenstartbestand voor Windows</a>, pak het uit en open <strong>Start-Kustivo-Keukenprinter.cmd</strong>. Bevestig daarna één testbon en laat het keukenvenster open.</p><details class="printer-help"><summary>Printer aansluiten</summary><p>Keukenprinter: 192.168.1.100:9100. Stel deze in Windows in als standaardprinter. Automatisch afdrukken zonder afdrukvenster werkt met Chrome in kiosk-printmodus.</p></details><div id="printerBacklogBox" class="msg warn hidden"><strong id="printerBacklogText"></strong><p>Deze oude bonnen blijven apart staan. Recente actieve bestellingen worden wel automatisch opgehaald.</p><button id="printerSkipOldBtn" class="btn dark" type="button" onclick="skipOldPrinterJobs()">Oude bonnen overslaan</button></div><div id="printerMessage" role="status" style="margin-top:8px"></div><div id="printerFailedBox" class="msg bad hidden"><span id="printerFailedMessage"></span> <button class="btn dark" type="button" onclick="retryFailedPrinterJob()">Bon opnieuw aanbieden</button> <button class="btn dark" type="button" onclick="confirmRecoveredPrinterJob()">Bon is al afgedrukt</button></div></section><details id="allergenManager" class="msg" style="border:1px solid #444"><summary style="cursor:pointer;font-weight:800">Allergenen beheren</summary><div id="allergenManagerBody"></div></details></div></details>
   <div id="stats" class="stats"></div><nav id="filters" class="filters" aria-label="Bestellingen filteren"></nav>
   <div id="historyMessage" class="history-message" role="status"></div><div id="printDispatchMessage" class="history-message" role="status"></div><div id="historyTools"></div><div id="orders"></div>
 </div>
@@ -103,15 +103,17 @@ async function initializePrinterStation(){
   if(printerStationEnabled&&!printerTestPassed){printerStationEnabled=false;localStorage.setItem('gt-kitchen-printer-enabled','false')}
   renderPrinterStation();
   await loadPrinterBacklog();
-  if(printerStationEnabled&&printerBacklogLoaded&&!printerBacklogJobs.length)startPrinterStation(false);
+  const kitchenLaunch=new URLSearchParams(location.search).get('printstation')==='1';
+  if(kitchenLaunch&&printerTestPassed&&printerBacklogLoaded){printerStationEnabled=true;localStorage.setItem('gt-kitchen-printer-enabled','true')}
+  if(printerStationEnabled&&printerBacklogLoaded)startPrinterStation(true);
   else if(printerStationEnabled)stopPrinterStation();
-  if(new URLSearchParams(location.search).get('printstation')==='1')openPrinterSettings();
+  if(kitchenLaunch)openPrinterSettings();
   if(!printerTestPassed)setPrinterMessage('Druk een testbon af. Na je bevestiging start het printstation automatisch.');
   void loadFailedPrinterJob();
 }
 async function togglePrinterStation(){
   if(!printerStationEnabled&&!printerTestPassed){setPrinterMessage('Druk eerst een testbon af en bevestig dat hij uit printer 192.168.1.100 kwam.');return}
-  if(!printerStationEnabled){await loadPrinterBacklog();if(!printerBacklogLoaded||printerBacklogJobs.length){setPrinterMessage('Controleer eerst de oude bonnen in de wachtrij.');return}}
+  if(!printerStationEnabled){await loadPrinterBacklog();if(!printerBacklogLoaded){setPrinterMessage('De printwachtrij kon niet worden gecontroleerd. Probeer opnieuw.');return}}
   printerStationEnabled=!printerStationEnabled;
   localStorage.setItem('gt-kitchen-printer-enabled',String(printerStationEnabled));
   renderPrinterStation();
@@ -123,7 +125,7 @@ function startPrinterStation(pollNow){
   renderPrinterStation();
   if(pollNow)void pollPrinterQueue();
   printerPollTimer=setInterval(()=>void pollPrinterQueue(),2500);
-  setPrinterMessage('Wachtrij wordt gecontroleerd. Test de printer vóór de eerste echte keukenbon.');
+  setPrinterMessage('Automatisch printstation actief. Recente actieve bestellingen worden opgehaald; oude bonnen blijven apart staan.');
 }
 function stopPrinterStation(){
   if(printerPollTimer){clearInterval(printerPollTimer);printerPollTimer=null}
@@ -142,7 +144,7 @@ async function printPrinterTest(){
     localStorage.setItem('gt-kitchen-printer-test-passed',String(printerTestPassed));
     if(!printerTestPassed){stopPrinterStation();setPrinterMessage('Printstation is uit. Controleer de keukenprinter in Windows en test opnieuw.');return;}
     await loadPrinterBacklog();
-    if(!printerBacklogLoaded||printerBacklogJobs.length){stopPrinterStation();setPrinterMessage('Testbon bevestigd. Controleer eerst de oude bonnen en start daarna het printstation.');return;}
+    if(!printerBacklogLoaded){stopPrinterStation();setPrinterMessage('Testbon bevestigd. De printwachtrij kon niet worden gecontroleerd. Probeer opnieuw.');return;}
     printerStationEnabled=true;
     localStorage.setItem('gt-kitchen-printer-enabled','true');
     startPrinterStation(false);
@@ -179,13 +181,13 @@ async function pollPrinterQueue(manual=false,jobId=null){
   printerPollBusy=true;renderPrinterStation();
   let claimed=null;
   try{
-    let query=sb.from('printer_jobs').select('id,payload,attempts,created_at').eq('status','queued');
+    let query=sb.from('printer_jobs').select('id,payload,attempts,created_at,orders!inner(status)').eq('status','queued');
     if(jobId)query=query.eq('id',jobId);
+    if(!manual)query=query.gte('created_at',new Date(Date.now()-24*60*60*1000).toISOString()).in('orders.status',['accepted','preparing','ready','on_way']);
     const {data:queued,error}=await query.order('created_at',{ascending:true}).limit(1);
     if(error)throw error;
     if(!queued?.length){if(Date.now()-printerRecoveryLastCheck>30000)await loadFailedPrinterJob();if(manual)setPrinterMessage('Er staat geen bon in de wachtrij.');return}
     const candidate=queued[0];
-    if(!manual&&candidate.created_at&&Date.now()-new Date(candidate.created_at).getTime()>24*60*60*1000){stopPrinterStation();await loadPrinterBacklog();setPrinterMessage('Oude bon gevonden. Controleer de wachtrij vóór het printstation verdergaat.');return}
     const {data,error:claimError}=await sb.from('printer_jobs').update({status:'printing',attempts:(Number(candidate.attempts)||0)+1,last_error:null}).eq('id',candidate.id).eq('status','queued').eq('attempts',candidate.attempts).select('id,payload,attempts').maybeSingle();
     if(claimError)throw claimError;
     if(!data)return;

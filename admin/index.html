@@ -22,9 +22,9 @@
 <div id="dashboardView" class="wrap hidden">
   <header class="head"><div><h1>Kustivo · Bestellingen</h1><small id="subtitle">Live overzicht</small></div><div class="actions"><span class="live"><span class="dot"></span> Live</span><button id="soundBtn" class="btn sound-off" type="button" onclick="toggleSound()">🔔 Geluid aan</button><button class="btn dark" type="button" onclick="loadOrders()">↻ Vernieuwen</button><button id="logoutBtn" class="btn dark">Uitloggen</button></div></header>
   <div class="system-bar"><span id="deliverySummary" class="system-state">Bezorgstatus laden…</span><span id="printerSummary" class="system-state warn">Keukenprinter uit</span><button class="btn dark" type="button" onclick="openPrinterSettings()">Printer instellen</button></div>
-  <details id="operationsSettings" class="settings-panel"><summary>Instellingen · bezorging, printer en allergenen</summary><div class="settings-body"><section class="msg ok" id="deliveryControls" aria-label="Bezorging beheren"><div class="actions"><strong id="deliveryState" role="status">Bezorgstatus laden…</strong><button id="deliveryPauseBtn" class="btn gold" type="button" onclick="toggleDeliveryPause()" disabled>Leveringen pauzeren</button></div><div style="margin-top:8px;font-size:13px">Afhalen en bestaande bestellingen blijven actief.</div><div id="deliverySettingsError" role="alert"></div></section><section class="msg warn" id="printerControls" aria-label="Keukenprinter beheren"><div class="actions"><strong id="printerState" role="status">Printstation uit op deze laptop</strong><button id="printerToggleBtn" class="btn dark" type="button" onclick="togglePrinterStation()">Printstation starten</button><button id="printerTestBtn" class="btn dark" type="button" onclick="printPrinterTest()">Testbon afdrukken</button></div><p class="printer-help">Na accepteren gaat de bon naar het printstation. Laat dit dashboard open op de laptop bij de keukenprinter.</p><details class="printer-help"><summary>Printer aansluiten</summary><p>Keukenprinter: 192.168.1.100:9100. Stel deze in Windows in als standaardprinter. Automatisch afdrukken zonder afdrukvenster werkt met Chrome in kiosk-printmodus.</p></details><div id="printerBacklogBox" class="msg warn hidden"><strong id="printerBacklogText"></strong><p>Controleer deze oude bonnen vóór je het printstation start.</p><button id="printerSkipOldBtn" class="btn dark" type="button" onclick="skipOldPrinterJobs()">Oude bonnen overslaan</button></div><div id="printerMessage" role="status" style="margin-top:8px"></div><div id="printerFailedBox" class="msg bad hidden"><span id="printerFailedMessage"></span> <button class="btn dark" type="button" onclick="retryFailedPrinterJob()">Bon opnieuw aanbieden</button> <button class="btn dark" type="button" onclick="confirmRecoveredPrinterJob()">Bon is al afgedrukt</button></div></section><details id="allergenManager" class="msg" style="border:1px solid #444"><summary style="cursor:pointer;font-weight:800">Allergenen beheren</summary><div id="allergenManagerBody"></div></details></div></details>
+  <details id="operationsSettings" class="settings-panel"><summary>Instellingen · bezorging, printer en allergenen</summary><div class="settings-body"><section class="msg ok" id="deliveryControls" aria-label="Bezorging beheren"><div class="actions"><strong id="deliveryState" role="status">Bezorgstatus laden…</strong><button id="deliveryPauseBtn" class="btn gold" type="button" onclick="toggleDeliveryPause()" disabled>Leveringen pauzeren</button></div><div style="margin-top:8px;font-size:13px">Afhalen en bestaande bestellingen blijven actief.</div><div id="deliverySettingsError" role="alert"></div></section><section class="msg warn" id="printerControls" aria-label="Keukenprinter beheren"><div class="actions"><strong id="printerState" role="status">Printstation uit op deze laptop</strong><button id="printerToggleBtn" class="btn dark" type="button" onclick="togglePrinterStation()">Printstation starten</button><button id="printerTestBtn" class="btn dark" type="button" onclick="printPrinterTest()">Testbon afdrukken</button></div><p class="printer-help">Na accepteren gaat de bon naar het actieve keukenprintstation. <a href="./Kustivo-keukenprinter.zip" download style="color:#ffd177">Download het keukenstartbestand voor Windows</a>, pak het uit en open <strong>Start-Kustivo-Keukenprinter.cmd</strong>. Bevestig daarna één testbon en laat het keukenvenster open.</p><details class="printer-help"><summary>Printer aansluiten</summary><p>Keukenprinter: 192.168.1.100:9100. Stel deze in Windows in als standaardprinter. Automatisch afdrukken zonder afdrukvenster werkt met Chrome in kiosk-printmodus.</p></details><div id="printerBacklogBox" class="msg warn hidden"><strong id="printerBacklogText"></strong><p>Controleer deze oude bonnen vóór je het printstation start.</p><button id="printerSkipOldBtn" class="btn dark" type="button" onclick="skipOldPrinterJobs()">Oude bonnen overslaan</button></div><div id="printerMessage" role="status" style="margin-top:8px"></div><div id="printerFailedBox" class="msg bad hidden"><span id="printerFailedMessage"></span> <button class="btn dark" type="button" onclick="retryFailedPrinterJob()">Bon opnieuw aanbieden</button> <button class="btn dark" type="button" onclick="confirmRecoveredPrinterJob()">Bon is al afgedrukt</button></div></section><details id="allergenManager" class="msg" style="border:1px solid #444"><summary style="cursor:pointer;font-weight:800">Allergenen beheren</summary><div id="allergenManagerBody"></div></details></div></details>
   <div id="stats" class="stats"></div><nav id="filters" class="filters" aria-label="Bestellingen filteren"></nav>
-  <div id="historyMessage" class="history-message" role="status"></div><div id="historyTools"></div><div id="orders"></div>
+  <div id="historyMessage" class="history-message" role="status"></div><div id="printDispatchMessage" class="history-message" role="status"></div><div id="historyTools"></div><div id="orders"></div>
 </div>
 <div id="alertToast" class="alert-toast">🔔 Nieuwe bestelling ontvangen</div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script>window.GT_CONFIG={SUPABASE_URL:'https://qpaycwrhohunpfjqmlga.supabase.co',SUPABASE_PUBLISHABLE_KEY:'sb_publishable_lEAgOU350gcdQdI_zYVDAQ_6p7uNeYM',CONNECTED_MODE:true};</script>
@@ -105,7 +105,8 @@ async function initializePrinterStation(){
   await loadPrinterBacklog();
   if(printerStationEnabled&&printerBacklogLoaded&&!printerBacklogJobs.length)startPrinterStation(false);
   else if(printerStationEnabled)stopPrinterStation();
-  if(!printerTestPassed)setPrinterMessage('Druk eerst een testbon af en bevestig dat hij uit de keukenprinter kwam.');
+  if(new URLSearchParams(location.search).get('printstation')==='1')openPrinterSettings();
+  if(!printerTestPassed)setPrinterMessage('Druk een testbon af. Na je bevestiging start het printstation automatisch.');
   void loadFailedPrinterJob();
 }
 async function togglePrinterStation(){
@@ -139,10 +140,15 @@ async function printPrinterTest(){
     await GTPrinter.printTestReceipt();
     printerTestPassed=confirm('Kwam de volledige testbon uit de keukenprinter 192.168.1.100?');
     localStorage.setItem('gt-kitchen-printer-test-passed',String(printerTestPassed));
-    if(!printerTestPassed)stopPrinterStation();
-    setPrinterMessage(printerTestPassed?'Test bevestigd. Je kunt het printstation starten; laat deze laptop en dit dashboard open.':'Printstation is uit. Controleer printer 192.168.1.100 in Windows en test opnieuw.');
-  }catch(error){setPrinterMessage(error.message||'Testbon afdrukken is mislukt.');}
-  finally{printerPollBusy=false;renderPrinterStation();}
+    if(!printerTestPassed){stopPrinterStation();setPrinterMessage('Printstation is uit. Controleer de keukenprinter in Windows en test opnieuw.');return;}
+    await loadPrinterBacklog();
+    if(!printerBacklogLoaded||printerBacklogJobs.length){stopPrinterStation();setPrinterMessage('Testbon bevestigd. Controleer eerst de oude bonnen en start daarna het printstation.');return;}
+    printerStationEnabled=true;
+    localStorage.setItem('gt-kitchen-printer-enabled','true');
+    startPrinterStation(false);
+    setPrinterMessage('Test bevestigd. Automatisch printstation actief: na Accepteren wordt de keukenbon hier opgehaald. Laat dit keukenvenster open.');
+  }catch(error){printerTestPassed=false;localStorage.setItem('gt-kitchen-printer-test-passed','false');stopPrinterStation();setPrinterMessage(error.message||'Testbon afdrukken is mislukt.');}
+  finally{printerPollBusy=false;renderPrinterStation();if(printerStationEnabled&&printerTestPassed)void pollPrinterQueue();}
 }
 let printerRecoveryLastCheck=0;
 async function loadFailedPrinterJob(){
@@ -312,7 +318,7 @@ async function runOrderAction(id,action){
   if(!response.ok||!result.ok)throw new Error(result.error||'Actie niet opgeslagen.');
   actionSucceeded=true;
   if(result.refundPending)alert('Bestelling geweigerd. Stripe verwerkt de terugbetaling. Controleer later via Terugbetaling controleren.');
-  if(action==='accept'&&printerStationEnabled)void pollPrinterQueue();
+  if(action==='accept'){if(printerStationEnabled){void pollPrinterQueue();document.getElementById('printDispatchMessage').textContent='Bestelling geaccepteerd. Het keukenprintstation verwerkt de bon.';}else document.getElementById('printDispatchMessage').textContent='Bestelling geaccepteerd. Laat het keukenvenster op de pc openstaan met Printstation actief, zodat de bon automatisch wordt opgehaald.';}
   if(action==='reprint'){
     document.getElementById('printerControls').scrollIntoView({behavior:'smooth',block:'start'});
     await pollPrinterQueue(true,result.printJob?.id||null);

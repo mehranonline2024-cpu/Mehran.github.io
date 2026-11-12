@@ -1,0 +1,39 @@
+KUSTIVO - AUTOMATISCH KEUKENPRINTEN (WINDOWS + GOOGLE CHROME)
+
+EENMALIG INSTELLEN
+1. Stel in Windows de keukenprinter (192.168.1.100) in als standaardprinter.
+   Windows > Instellingen > Printers en scanners > keukenprinter > Als standaard instellen.
+   Als Windows zelf de standaardprinter beheert, zet die automatische keuze uit.
+   Gebruik de bestaande printerinstellingen voor 80 mm bonpapier.
+2. Sluit het huidige Kustivo-dashboardvenster op de keuken-pc. Zo is er maar
+   een printstation dat de bonnen ophaalt. Andere browsertabbladen kunnen openblijven.
+3. Pak Kustivo-keukenprinter.zip volledig uit, bijvoorbeeld op het bureaublad.
+4. Dubbelklik op Start-Kustivo-Keukenprinter.cmd.
+5. Meld je in het nieuwe Kustivo-venster aan met je bestaande beheeraccount
+   en Authenticator-code. Dit aparte keukenvenster bewaart zijn eigen sessie.
+6. Klik op Testbon afdrukken. Bevestig alleen als de volledige bon uit de
+   keukenprinter kwam. Na die bevestiging wordt het printstation actief.
+   Staan er nog oude bonnen in de wachtrij, controleer die dan eerst en kies
+   zo nodig Oude bonnen overslaan. Klik daarna op Printstation starten.
+
+DAGELIJKS GEBRUIK
+Open het keukenvenster via Start-Kustivo-Keukenprinter.cmd.
+Laat de pc wakker en dit venster open; controleer dat Printstation actief staat.
+Bij Accepteren wordt de bon automatisch door dit keukenvenster afgedrukt.
+Je kunt de bestelling ook op je tablet accepteren terwijl dit pc-venster openstaat.
+
+ALS HET NIET WERKT
+- Geen bon: controleer Printstation actief, de Windows-printerwachtrij en de printer.
+- Afdrukvenster: open het keukenvenster opnieuw via het CMD-bestand.
+- Opslaan als PDF: selecteer in Windows de keukenprinter als standaardprinter.
+- Een ontbrekende bon kun je via Meer opties > Bon opnieuw afdrukken aanbieden.
+  Controleer vooraf of hij niet al afgedrukt is.
+
+Dit bestand opent Google Chrome met automatische afdrukstand en een apart
+Kustivo-profiel. Het installeert geen printerstuurprogramma en bevat geen
+wachtwoorden. Het zet de standaardprinter van Windows niet zelf om.
+
+Technische onderbouwing:
+https://github.com/chromium/chromium/blob/main/chrome/common/chrome_switches.h
+https://github.com/chromium/chromium/blob/main/chrome/common/pref_names.h
+https://www.chromium.org/developers/creating-and-using-profiles/

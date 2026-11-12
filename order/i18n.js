@@ -1,5 +1,7 @@
 (() => {
   const en = {
+    "Menu laden…": "Loading menu…",
+    "Actuele prijzen ophalen…": "Loading current prices…",
     "Bici Burger": "Bici Burger",
     "Dürum Kebab": "Kebab Wrap",
     "Pita Kebab": "Kebab Pita",
